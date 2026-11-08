@@ -1,0 +1,22 @@
+[Unit]
+Description=TerminalVox: voice interface to Claude Code sessions (Pipecat)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@DIR@
+# User systemd has no PATH from your shell profile: uv (snap), claude (~/.local/bin), tmux, tailscale.
+Environment=PATH=%h/.local/bin:/snap/bin:/usr/local/bin:/usr/bin:/bin
+Environment=LOG_DIR=@LOG_DIR@
+ExecStart=@DIR@/run.sh
+# Stop only the server (uv forwards the signal to python). If run.sh started the tmux server itself,
+# it and the claude sessions must survive stop/restart.
+KillMode=process
+TimeoutStopSec=15
+# uv passes on python's exit code on SIGTERM (128+15): a normal stop.
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
