@@ -43,6 +43,19 @@ class Phrases:
     minutes: Callable[[int], str]
     just_started: str
     now: str
+    # Bridge commands, only at the start of a phrase (commands.py). `switch` verbs always act;
+    # `switch_weak` ones ("go back to") act only if a session matches, else the phrase goes to Claude.
+    switch: re.Pattern  # with a (?P<name>…) group
+    switch_weak: re.Pattern
+    list_sessions: re.Pattern
+    name_noise: str  # words dropped from a spoken session name ("session", "project")
+    ordinals: list[str]  # answers to "which one?": first, second, third
+    switch_which: str  # {options}
+    switch_none: str  # {name}
+    switch_already: str  # {name}
+    sessions: str  # {names}
+    no_sessions: str
+    or_: str
     echo: str  # {text}; echo mode (no Claude session), for testing the voice loop
     echo_long_trigger: str
     echo_long: str
@@ -121,6 +134,27 @@ EN = Phrases(
     minutes=lambda n: f" for {n} minute{'s' if n != 1 else ''}",
     just_started=", just started",
     now="Now: ",
+    switch=re.compile(
+        r"^(?:(?:ok(?:ay)?|now|please|so|and|let's)[,\s]+)*(?:switch|change|jump|hop)\s+(?:back\s+|over\s+)?(?:to|into)\s+(?P<name>.+)$",
+        re.I | re.S,
+    ),
+    switch_weak=re.compile(
+        r"^(?:(?:ok(?:ay)?|now|please|so|and|let's)[,\s]+)*(?:go|get|come|move)\s+(?:back\s+)?(?:over\s+)?(?:to|into)\s+(?P<name>.+)$",
+        re.I | re.S,
+    ),
+    list_sessions=re.compile(
+        r"^(?:(?:ok(?:ay)?|so|and)[,\s]+)*(?:what|which)\s+sessions(?:\s+(?:are\s+there|do\s+(?:i|we)\s+have|are\s+(?:open|running)))?"
+        r"|^(?:(?:ok(?:ay)?|so|and|please)[,\s]+)*(?:list|show)(?:\s+(?:me|the|my))*\s+sessions(?:\s+please)?[\s.?!]*$",
+        re.I,
+    ),
+    name_noise=r"\b(the|session|project|window|tab|please)\b",
+    ordinals=[r"\b(first|one)\b", r"\b(second|two)\b", r"\b(third|three)\b"],
+    switch_which="I have {options}. Which one?",
+    switch_none="I can't find a session called {name}.",
+    switch_already="We're already in {name}.",
+    sessions="Sessions: {names}.",
+    no_sessions="There are no Claude sessions in tmux.",
+    or_=" or ",
     echo="You said: {text}",
     echo_long_trigger="long",
     echo_long=(
@@ -194,6 +228,27 @@ RU = Phrases(
     minutes=lambda n: f" уже {n} {_ru_plural(n, 'минуту', 'минуты', 'минут')}",
     just_started=", только начал",
     now="Сейчас: ",
+    switch=re.compile(
+        r"^(?:(?:ну|давай|а|так|теперь|пожалуйста)[,\s]+)*(?:переключи(?:сь|те|тесь)?|переключаемся|switch)\s+(?:обратно\s+)?(?:на|в|во|к|ко|to)\s+(?P<name>.+)$",
+        re.I | re.S,
+    ),
+    switch_weak=re.compile(
+        r"^(?:(?:ну|давай|а|так|теперь|пожалуйста)[,\s]+)*(?:перейди(?:те)?|переходим|вернись|вернитесь|вернёмся|вернемся|возвращаемся)\s+(?:обратно\s+)?(?:на|в|во|к|ко)\s+(?P<name>.+)$",
+        re.I | re.S,
+    ),
+    list_sessions=re.compile(
+        r"^(?:(?:ну|а|так|и)[,\s]+)*(?:какие(?:\s+(?:есть|у\s+(?:меня|нас)|открыты|сейчас))*\s+сессии(?:\s+(?:есть|открыты))?"
+        r"|(?:покажи|перечисли|назови)\s+сессии|список\s+сессий)[\s.?!]*$",
+        re.I,
+    ),
+    name_noise=r"\b(сесси[юяией]|проект[аеу]?|окн[оау]|session|project)\b",
+    ordinals=[r"\b(перв|один|одну)", r"\b(втор|два|две)", r"\b(трет|три)"],
+    switch_which="Есть {options}. Какую?",
+    switch_none="Не нашёл сессию {name}.",
+    switch_already="Мы уже в {name}.",
+    sessions="Сессии: {names}.",
+    no_sessions="Сессий Claude в tmux нет.",
+    or_=" или ",
     echo="Вы сказали: {text}",
     echo_long_trigger="длинн",
     echo_long=(

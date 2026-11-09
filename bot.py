@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.datastructures import Headers
 
 from bridge import ClaudeSession, TmuxBridge, list_sessions
+from commands import parse_aliases
 from phrases import LANGS
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
@@ -96,6 +97,8 @@ TURN_MAX_PAUSE_SECS = float(os.getenv("TURN_MAX_PAUSE_SECS", "1.5"))
 MERGE_SECS = float(os.getenv("MERGE_SECS", "5"))
 # A short tone when a phrase has been sent to the session.
 BEEP = os.getenv("BEEP", "1") != "0"
+# Spoken aliases for session names in voice commands: "календарь=scheduling-agent, chef=day".
+SESSION_ALIASES = parse_aliases(os.getenv("SESSION_ALIASES", ""))
 
 # The client picks the speech pace (request_data.pace): pauses depend on the person, not the server.
 # (wait for an unfinished phrase, max Smart Turn pause, merge window)
@@ -242,7 +245,8 @@ async def index():
 
 @app.get("/api/sessions")
 async def sessions():
-    return {"sessions": list_sessions(), "connected": ACTIVE["bridge"] is not None}
+    bridge = ACTIVE["bridge"]
+    return {"sessions": list_sessions(), "connected": bridge is not None, "current": bridge and bridge.pane}
 
 
 @app.post("/api/switch")
@@ -439,7 +443,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     bridge = TmuxBridge(
         session, timings, phrases=PHRASES, prefix=VOICE_PREFIX, max_chars=MAX_SPOKEN_CHARS, filler_secs=FILLER_SECS,
         tool_gap_secs=TOOL_GAP_SECS, hold_secs=hold_secs, merge_secs=merge_secs, beep=BEEP,
-        image_wait_secs=IMAGE_WAIT_SECS,
+        image_wait_secs=IMAGE_WAIT_SECS, aliases=SESSION_ALIASES,
         inject=body.get("inject", True),
     )
 

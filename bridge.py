@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 from loguru import logger
 
+from commands import find, parse, pick
 from phrases import EN, Phrases
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
@@ -34,6 +35,7 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frameworks.rtvi.frames import RTVIServerMessageFrame
 
 CLAUDE_DIR = Path.home() / ".claude"
 
@@ -335,6 +337,7 @@ class TmuxBridge(FrameProcessor):
         hold_max_secs: float = 15.0,
         beep: bool = True,
         image_wait_secs: float = 10.0,
+        aliases: dict[str, str] | None = None,
     ):
         super().__init__()
         self._session = session
@@ -380,6 +383,10 @@ class TmuxBridge(FrameProcessor):
         self._cut: list[str] = []  # text cut off, plus text skipped after the cut
         self._cut_at = 0.0
         self._replay_task = None
+        # Voice commands: spoken aliases of session names, and the choices offered by "which one?".
+        self._aliases = aliases or {}
+        self._choices: list[dict] = []
+        self._choices_at = 0.0
 
     async def setup(self, setup):
         await super().setup(setup)
@@ -390,6 +397,8 @@ class TmuxBridge(FrameProcessor):
 
     async def start_voice(self):
         """A client connected: turn voice mode on in the session, or just greet."""
+        if self._session:
+            await self._announce_session()
         if self._session and self._inject:
             await self._say(self._p.connecting.format(name=self._session.name))
             await self._send_control(self._p.voice_on)
@@ -415,9 +424,68 @@ class TmuxBridge(FrameProcessor):
         self._last_sent, self._last_sent_at, self._spoken_at = "", 0.0, 0.0
         self._muted = self._interrupted_bot = False
         self._tail_task = self.create_task(self._tail())
+        await self._announce_session()
         await self._say(self._p.switching.format(name=session.name))
         if inject:
             await self._send_control(self._p.voice_on)
+
+    @property
+    def pane(self) -> str | None:
+        """The tmux pane of the current session, None in echo mode."""
+        return self._session.target if self._session else None
+
+    async def _announce_session(self):
+        # Tell the client which session it is talking to: the page updates its picker on a voice switch.
+        await self.push_frame(RTVIServerMessageFrame(
+            data={"type": "session", "pane": self._session.target, "name": self._session.name}))
+
+    async def _command(self, text: str) -> bool:
+        """Voice commands of the bridge ("switch to X", "what sessions are there?"); True if handled."""
+        if self._choices:
+            choices, self._choices = self._choices, []
+            # The answer to "which one?" ("the second", "pipeline"); anything else is a normal phrase.
+            if time.time() - self._choices_at < 30 and (chosen := pick(text, choices, self._p)):
+                await self._switch_to(chosen)
+                return True
+        cmd = parse(text, self._p)
+        if not cmd:
+            return False
+        kind, name, strong = cmd
+        try:
+            sessions = list_sessions()
+        except Exception as e:
+            logger.warning(f"Session list failed: {e}")
+            sessions = []
+        if kind == "list":
+            names = [x["name"] for x in sessions[:8]]
+            logger.info(f"Command: list sessions -> {names}")
+            await self._say(self._p.sessions.format(names=", ".join(names)) if names else self._p.no_sessions)
+            return True
+        hits = find(name, sessions, self._aliases)
+        logger.info(f"Command: switch to {name!r} -> {[x['name'] for x in hits]}")
+        if not hits:
+            if not strong:
+                return False  # "go back to the docs folder…": a request for claude, not a command
+            await self._say(self._p.switch_none.format(name=name))
+        elif len(hits) > 1:
+            self._choices, self._choices_at = hits[:3], time.time()
+            names = [x["name"] for x in self._choices]
+            await self._say(self._p.switch_which.format(options=", ".join(names[:-1]) + self._p.or_ + names[-1]))
+        else:
+            await self._switch_to(hits[0])
+        return True
+
+    async def _switch_to(self, info: dict):
+        if self._session and self._session.target == info["pane"]:
+            await self._say(self._p.switch_already.format(name=self._session.name))
+            return
+        try:
+            session = ClaudeSession(info["pane"])
+        except Exception as e:
+            logger.warning(f"Cannot switch to {info['name']}: {e}")
+            await self._say(self._p.switch_none.format(name=info["name"]))
+            return
+        await self.switch(session, self._inject)
 
     async def _send_control(self, text: str):
         # A control message: no filler and no merging with the user's phrases.
@@ -573,6 +641,9 @@ class TmuxBridge(FrameProcessor):
         text, interrupted = self._pending, self._pending_interrupted
         self._pending, self._pending_interrupted = "", False
         if not text:
+            return
+        if await self._command(text):
+            self._timings.reset()
             return
         if self._session and is_checkin(text, self._p) and self._session.busy():
             logger.info(f"Session busy, answering with status: {text}")

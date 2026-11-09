@@ -142,8 +142,24 @@ Sessions that are already running don't reread `CLAUDE.md`, so the injected mess
   asks you to answer in the terminal: Enter would confirm the dialog.
 - Long replies are spoken up to 600 characters, then "the rest is in the terminal".
 
-In Russian the commands are «стоп», «хватит», «подожди», «пока», «до свидания», «отбой», «ты здесь?».
-Other languages can be added in `phrases.py`.
+### Switching sessions by voice
+
+- "Switch to aramco", "go back to day": the bridge finds the session by name and moves the call there,
+  as if you had picked it on the page (the page follows). The command counts only at the start of a
+  phrase, and the phrase itself doesn't go to claude.
+- Names are matched fuzzily: recognition spells them the way it hears them, possibly in another script,
+  so "Арамко" finds `aramco-pbit-cell` and "шедулинг" finds `scheduling-agent`. The session name, its
+  tmux window and its folder all count, as do single words of them.
+- If several sessions fit, the bot names up to three and asks which one: answer with a name or
+  "the second". If none fits, it says so. For names that sound nothing like the session, set
+  `SESSION_ALIASES` ("calendar=scheduling-agent").
+- "Go back to …" and "go to …" act only when a session matches, so "go back to the previous version of
+  the file" still goes to claude; "switch to …" always acts.
+- "What sessions are there?", "list sessions": the bot reads up to eight, most recent first.
+
+In Russian the commands are «стоп», «хватит», «подожди», «пока», «до свидания», «отбой», «ты здесь?»,
+«переключись на …», «перейди в …», «вернись к …», «какие есть сессии». Other languages can be added in
+`phrases.py`.
 
 ## Settings
 
@@ -158,6 +174,8 @@ Everything is set in `.env`; see the comments in `.env.example`. The main ones:
 - `FILLER_SECS` (1.5), `TOOL_GAP_SECS` (4): fillers and tool announcements; `0` turns them off.
 - `BARGE_IN_SECS`, `VAD_STOP_SECS`, `TURN_MAX_PAUSE_SECS`: the balance between speed and how often the
   bot cuts you off.
+- `SESSION_ALIASES`: extra spoken names for sessions in voice commands, `alias=session-name` separated by
+  commas.
 - `TAILNET_USERS`: who in the tailnet may connect (comma-separated logins).
 - `MAX_SPOKEN_CHARS`, `IDLE_TIMEOUT_SECS`, `PORT`, `LOG_DIR`, `TAILSCALE_SERVE` (`0` leaves the
   `tailscale serve` config alone).
@@ -168,11 +186,13 @@ Everything is set in `.env`; see the comments in `.env.example`. The main ones:
 - `bridge.py`: the tmux bridge: session list, sending, switching, transcript tailing, fillers, tool
   announcements, markdown cleanup.
 - `phrases.py`: everything the bot says and the spoken commands it recognizes, per language.
+- `commands.py`: parsing of voice commands and fuzzy matching of spoken session names.
 - `ui.html`: the page with the session picker and the WebRTC client.
 - `voice-rules.md`, `voice-rules.ru.md`: voice mode rules for `~/.claude/CLAUDE.md`.
 - `run.sh`: one-command start; `start-session.sh`: the dedicated claude session.
 - `Makefile`, `terminalvox.service.in`: running in the background as a systemd user service.
 - `tests/selftest.py`: a test without a human: a WebRTC client "speaks" synthesized phrases.
+- `tests/test_commands.py`: unit tests of voice commands: `uv run python -m unittest discover tests`.
 - `NOTES.md`: the transcript format, choice of services, measurements, known issues and why things are
   done the way they are.
 
@@ -181,7 +201,9 @@ Everything is set in `.env`; see the comments in `.env.example`. The main ones:
 Any client can use it, e.g. a native phone app.
 
 - `GET /`: the page.
-- `GET /api/sessions`: the session list and whether a call is active.
+- `GET /api/sessions`: the session list, whether a call is active, and the pane of the call's session
+  (`current`). During a call the bot also sends an RTVI server message
+  `{"type": "session", "pane", "name"}` over the data channel whenever the session changes.
 - `POST /api/offer`: Pipecat WebRTC signaling; `request_data` carries `{pane, inject, pace}`
   (`pace`: `fast`, `normal` or `slow`).
 - `POST /api/switch` with JSON `{"pane": "%56", "inject": true}`: move the ongoing call to another

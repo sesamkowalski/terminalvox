@@ -159,6 +159,12 @@ async function load() {
   if ($("list").classList.contains("open")) render();
 }
 
+function followSession({ pane, name }) {
+  if (pane !== selected) { selected = pane; store.set("pane", pane); load(); }
+  if (document.activeElement !== $("search")) $("search").value = name;
+  if (pc && !quota) setStatus(`Talking to ${name}`, "ok");
+}
+
 async function choose(s) {
   const changed = s.pane !== selected;
   selected = s.pane;
@@ -217,6 +223,8 @@ async function connect() {
     pc.createDataChannel("chat").onmessage = (e) => {
       let m;
       try { m = JSON.parse(e.data); } catch { return; }
+      // The bot switched sessions (by voice or via /api/switch): follow it in the picker.
+      if (m.type === "server-message" && m.data?.type === "session") return followSession(m.data);
       if (m.type !== "error") return;
       const text = m.data?.error || "";
       if (/quota|exceeded/i.test(text)) quota = true;

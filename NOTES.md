@@ -302,3 +302,20 @@ is persisted in tailscaled's state anyway.
 - `pipecat.runner.run` calls `load_dotenv(override=True)` on import, so values from `.env` overwrote
   environment variables (`VOICE_LANG=en uv run bot.py` had no effect). `bot.py` saves the environment
   before importing Pipecat and restores it afterwards.
+
+## Switching sessions by voice (2026-11-09)
+
+- Bridge commands are in `commands.py`, their patterns in `phrases.py`. A command counts only at the start
+  of a phrase, and the phrase itself is not sent to the session. The check runs in `_send_pending`, on the
+  whole phrase after waiting for its continuation, so "Switch to…" + pause + "aramco" works too.
+- Strong verbs ("switch") always act: no match means "I can't find a session called X". Weak ones ("go back
+  to", "go to") act only when a session matches, otherwise the phrase goes to claude: "go back to the start
+  of the file" is a request, not a command. A tail longer than four words is not a session name.
+- Names: both sides become a rough phonetic key (Cyrillic transliterated, c→k, sch→sh, e/y→i, no double
+  letters), so «Арамко» = aramco and «шедулинг» = scheduling. A session's keys are its name, tmux window and
+  folder, and their words. Tiers: whole name 1.0, word 0.95, prefix 0.9, otherwise SequenceMatcher (capped at
+  0.85, threshold 0.65). A session wins only if it is a tier above the rest; otherwise "I have A or B. Which
+  one?", and the answer (a name, "the second") is accepted for 30 s. Names that sound nothing alike:
+  `SESSION_ALIASES`.
+- The page learns about a switch from an RTVI server message `{"type": "session", pane, name}` over the data
+  channel (RTVIObserver sends it without client-ready); `/api/sessions` also returns `current`.
