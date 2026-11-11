@@ -33,9 +33,12 @@ def sound(text: str) -> str:
 
 
 def parse(text: str, p: Phrases) -> tuple[str, str, bool] | None:
-    """(kind, name, strong) if the phrase starts with a command, else None: ("switch", name, strong) or
-    ("list", "", True). A weak switch ("go back to …") must not swallow a request when no session matches."""
+    """(kind, name, strong) if the phrase starts with a command, else None: ("switch", name, strong),
+    ("back", "", True) or ("list", "", True). A weak switch ("go back to …") must not swallow a request
+    when no session matches."""
     t = text.strip()
+    if p.switch_back.match(t):
+        return "back", "", True
     for pat, strong in ((p.switch, True), (p.switch_weak, False)):
         if m := pat.match(t):
             name = re.sub(p.name_noise, " ", m.group("name"), flags=re.I)

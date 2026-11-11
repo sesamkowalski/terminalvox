@@ -319,3 +319,7 @@ is persisted in tailscaled's state anyway.
   `SESSION_ALIASES`.
 - The page learns about a switch from an RTVI server message `{"type": "session", pane, name}` over the data
   channel (RTVIObserver sends it without client-ready); `/api/sessions` also returns `current`.
+- "Go back", "switch back", "back" count only as the whole phrase ("go back and fix the test" goes to
+  claude). `switch()` remembers the previous session on every switch, the page's included, so saying it
+  again toggles between the two. Its pane is checked against `list_sessions()`: gone means "Session X is
+  closed", no switch yet means "There's nowhere to go back to".

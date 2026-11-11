@@ -47,12 +47,15 @@ class Phrases:
     # `switch_weak` ones ("go back to") act only if a session matches, else the phrase goes to Claude.
     switch: re.Pattern  # with a (?P<name>…) group
     switch_weak: re.Pattern
+    switch_back: re.Pattern  # the whole phrase: "go back" to the previous session
     list_sessions: re.Pattern
     name_noise: str  # words dropped from a spoken session name ("session", "project")
     ordinals: list[str]  # answers to "which one?": first, second, third
     switch_which: str  # {options}
     switch_none: str  # {name}
     switch_already: str  # {name}
+    no_previous: str
+    previous_closed: str  # {name}
     sessions: str  # {names}
     no_sessions: str
     or_: str
@@ -142,6 +145,10 @@ EN = Phrases(
         r"^(?:(?:ok(?:ay)?|now|please|so|and|let's)[,\s]+)*(?:go|get|come|move)\s+(?:back\s+)?(?:over\s+)?(?:to|into)\s+(?P<name>.+)$",
         re.I | re.S,
     ),
+    switch_back=re.compile(
+        r"^(?:(?:ok(?:ay)?|now|please|so|and|let's)[,\s]+)*(?:(?:go|switch|get|come|jump|hop|move)\s+)?back(?:\s+please)?[\s.!…]*$",
+        re.I,
+    ),
     list_sessions=re.compile(
         r"^(?:(?:ok(?:ay)?|so|and)[,\s]+)*(?:what|which)\s+sessions(?:\s+(?:are\s+there|do\s+(?:i|we)\s+have|are\s+(?:open|running)))?"
         r"|^(?:(?:ok(?:ay)?|so|and|please)[,\s]+)*(?:list|show)(?:\s+(?:me|the|my))*\s+sessions(?:\s+please)?[\s.?!]*$",
@@ -152,6 +159,8 @@ EN = Phrases(
     switch_which="I have {options}. Which one?",
     switch_none="I can't find a session called {name}.",
     switch_already="We're already in {name}.",
+    no_previous="There's nowhere to go back to.",
+    previous_closed="Session {name} is closed.",
     sessions="Sessions: {names}.",
     no_sessions="There are no Claude sessions in tmux.",
     or_=" or ",
@@ -236,6 +245,12 @@ RU = Phrases(
         r"^(?:(?:ну|давай|а|так|теперь|пожалуйста)[,\s]+)*(?:перейди(?:те)?|переходим|вернись|вернитесь|вернёмся|вернемся|возвращаемся)\s+(?:обратно\s+)?(?:на|в|во|к|ко)\s+(?P<name>.+)$",
         re.I | re.S,
     ),
+    switch_back=re.compile(
+        r"^(?:(?:ну|давай|а|так|теперь|пожалуйста|ок(?:ей)?)[,\s]+)*"
+        r"(?:(?:вернись|вернитесь|вернёмся|вернемся|возвращаемся|переключись|переключи|переключаемся|иди|пошли)\s+)?"
+        r"(?:обратно|назад)(?:\s+пожалуйста)?[\s.!…]*$",
+        re.I,
+    ),
     list_sessions=re.compile(
         r"^(?:(?:ну|а|так|и)[,\s]+)*(?:какие(?:\s+(?:есть|у\s+(?:меня|нас)|открыты|сейчас))*\s+сессии(?:\s+(?:есть|открыты))?"
         r"|(?:покажи|перечисли|назови)\s+сессии|список\s+сессий)[\s.?!]*$",
@@ -246,6 +261,8 @@ RU = Phrases(
     switch_which="Есть {options}. Какую?",
     switch_none="Не нашёл сессию {name}.",
     switch_already="Мы уже в {name}.",
+    no_previous="Некуда возвращаться.",
+    previous_closed="Сессия {name} закрыта.",
     sessions="Сессии: {names}.",
     no_sessions="Сессий Claude в tmux нет.",
     or_=" или ",

@@ -387,6 +387,7 @@ class TmuxBridge(FrameProcessor):
         self._aliases = aliases or {}
         self._choices: list[dict] = []
         self._choices_at = 0.0
+        self._previous: dict | None = None  # {"pane", "name"} of the session before the last switch
 
     async def setup(self, setup):
         await super().setup(setup)
@@ -419,6 +420,8 @@ class TmuxBridge(FrameProcessor):
         self._pending, self._pending_interrupted = "", False
         self._images, self._last_images = [], []
         self._unsaid, self._cut, self._replay_task = [], [], None
+        if old and old.target != session.target:
+            self._previous = {"pane": old.target, "name": old.name}
         self._session, self._inject, self._voice_on = session, inject, False
         self._tailer = TranscriptTailer(session)
         self._last_sent, self._last_sent_at, self._spoken_at = "", 0.0, 0.0
@@ -456,6 +459,17 @@ class TmuxBridge(FrameProcessor):
         except Exception as e:
             logger.warning(f"Session list failed: {e}")
             sessions = []
+        if kind == "back":
+            # "Go back": to the session before the last switch; again toggles between the two.
+            prev = self._previous
+            logger.info(f"Command: go back -> {prev}")
+            if not prev:
+                await self._say(self._p.no_previous)
+            elif not (live := [x for x in sessions if x["pane"] == prev["pane"]]):
+                await self._say(self._p.previous_closed.format(name=prev["name"]))
+            else:
+                await self._switch_to(live[0])
+            return True
         if kind == "list":
             names = [x["name"] for x in sessions[:8]]
             logger.info(f"Command: list sessions -> {names}")

@@ -155,6 +155,8 @@ Sessions that are already running don't reread `CLAUDE.md`, so the injected mess
   `SESSION_ALIASES` ("calendar=scheduling-agent").
 - "Go back to …" and "go to …" act only when a session matches, so "go back to the previous version of
   the file" still goes to claude; "switch to …" always acts.
+- "Go back", "switch back", "back" (the whole phrase): returns to the session you came from; saying it
+  again toggles between the two. If there is none or it has closed, the bot says so.
 - "What sessions are there?", "list sessions": the bot reads up to eight, most recent first.
 
 In Russian the commands are «стоп», «хватит», «подожди», «пока», «до свидания», «отбой», «ты здесь?»,

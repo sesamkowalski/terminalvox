@@ -33,6 +33,16 @@ class Parse(unittest.TestCase):
         self.assertEqual(parse("What sessions are there?", EN), ("list", "", True))
         self.assertEqual(parse("List sessions.", EN), ("list", "", True))
 
+    def test_back(self):
+        for phrase in ("Вернись обратно.", "Ну, назад!", "Обратно", "Давай вернёмся обратно", "Вернись назад"):
+            self.assertEqual(parse(phrase, RU), ("back", "", True), phrase)
+        for phrase in ("Go back.", "OK, switch back", "Back!", "go back please"):
+            self.assertEqual(parse(phrase, EN), ("back", "", True), phrase)
+        self.assertIsNone(parse("Вернись назад к прошлому коммиту.", RU))
+        self.assertIsNone(parse("Назад в будущее посмотрим?", RU))
+        self.assertIsNone(parse("Go back and fix the test.", EN))
+        self.assertEqual(parse("Вернись обратно к дэй", RU), ("switch", "дэй", False))
+
     def test_not_a_command(self):
         # Only at the start of a phrase, and a long tail is a request, not a session name.
         self.assertIsNone(parse("Я хочу, чтобы ты переключился на другую задачу.", RU))
@@ -89,10 +99,6 @@ class Pick(unittest.TestCase):
         self.assertIsNone(pick("не знаю", choices, RU))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Bridge(unittest.IsolatedAsyncioTestCase):
     """TmuxBridge._command with tmux replaced by stubs."""
 
@@ -115,7 +121,11 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
         self.said, self.switched = [], []
 
         async def say(text): self.said.append(text)
-        async def switch(session, inject): self.switched.append(session.name)
+        async def switch(session, inject):  # what the real switch does with the session pair
+            if self.b._session:
+                self.b._previous = {"pane": self.b._session.target, "name": self.b._session.name}
+            self.b._session = session
+            self.switched.append(session.name)
         self.b._say, self.b.switch = say, switch
 
     async def asyncTearDown(self):
@@ -143,3 +153,22 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.b._command("Вернись к началу файла."))
         self.assertFalse(await self.b._command("Почини тесты."))
         self.assertEqual((self.said, self.switched), ([], []))
+
+    async def test_back(self):
+        self.assertTrue(await self.b._command("Вернись обратно."))
+        self.assertEqual(self.said, ["Некуда возвращаться."])
+        await self.b._command("Переключись на дэй.")
+        await self.b._command("Переключись на Арамко.")
+        self.assertTrue(await self.b._command("Назад."))
+        self.assertTrue(await self.b._command("Обратно!"))
+        self.assertEqual(self.switched, ["day", "aramco-pbit-cell", "day", "aramco-pbit-cell"])
+
+    async def test_back_closed(self):
+        self.b._previous = {"pane": "%gone", "name": "gone"}
+        self.assertTrue(await self.b._command("Вернись назад"))
+        self.assertEqual(self.said, ["Сессия gone закрыта."])
+        self.assertEqual(self.switched, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
