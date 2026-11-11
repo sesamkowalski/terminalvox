@@ -32,11 +32,19 @@ def sound(text: str) -> str:
     return re.sub(r"(.)\1+", r"\1", s)  # double letters
 
 
+def unstretch(text: str) -> str:
+    """Undo vowels stretched by speech recognition ("переключись нааа Арамко"): a repeated vowel and any
+    letter repeated three times or more become one. Real double vowels are rare in commands («сессии»
+    becomes «сесси», and the patterns allow that)."""
+    text = re.sub(r"([аеёиоуыэюяaeiouy])\1+", r"\1", text, flags=re.I)
+    return re.sub(r"([^\W\d_])\1{2,}", r"\1", text)
+
+
 def parse(text: str, p: Phrases) -> tuple[str, str, bool] | None:
     """(kind, name, strong) if the phrase starts with a command, else None: ("switch", name, strong),
     ("back", "", True) or ("list", "", True). A weak switch ("go back to …") must not swallow a request
     when no session matches."""
-    t = text.strip()
+    t = unstretch(text.strip())
     if p.switch_back.match(t):
         return "back", "", True
     for pat, strong in ((p.switch, True), (p.switch_weak, False)):

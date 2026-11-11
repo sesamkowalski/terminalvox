@@ -323,6 +323,9 @@ is persisted in tailscaled's state anyway.
   claude). `switch()` remembers the previous session on every switch, the page's included, so saying it
   again toggles between the two. Its pane is checked against `list_sessions()`: gone means "Session X is
   closed", no switch yet means "There's nowhere to go back to".
+- Recognition stretches vowels («переключись нааа Арамко») and adds fillers ("so", "um", «э-э-э»). Before
+  parsing, `unstretch()` collapses a repeated vowel and any letter repeated three times or more (so
+  «сессии» becomes «сесси», which the patterns allow). The fillers are shared: `RU_INTRO`/`EN_INTRO`.
 
 ## Stopping the service (2026-11-11)
 

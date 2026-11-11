@@ -43,6 +43,20 @@ class Parse(unittest.TestCase):
         self.assertIsNone(parse("Go back and fix the test.", EN))
         self.assertEqual(parse("Вернись обратно к дэй", RU), ("switch", "дэй", False))
 
+    def test_fillers_and_stretched_vowels(self):
+        for phrase in ("Итак, переключись нааа Арамко.", "Так вот, переключись на Арамко", "Слушай, переключись наа Арамко",
+                       "Окей, переключись на Арамко", "Хорошо, переключись на Арамко", "Э-э-э, переключись на Арамко",
+                       "А-а-а, ну, переключись на Арамко", "М-м, переключись на Арамко", "Э... переключись на Арамко",
+                       "Пееереключись на Арамко"):
+            self.assertEqual(parse(phrase, RU), ("switch", "Арамко", True), phrase)
+        self.assertEqual(parse("Итак, вернись обратнооо.", RU), ("back", "", True))
+        self.assertEqual(parse("Э-э, какие есть сессии?", RU), ("list", "", True))
+        self.assertEqual(parse("Ну, переключись на сессию дэй", RU), ("switch", "дэй", True))
+        self.assertEqual(parse("Um, switch to aramco", EN), ("switch", "aramco", True))
+        self.assertEqual(parse("Well, list sessions.", EN), ("list", "", True))
+        self.assertIsNone(parse("Итак, давай починим тесты.", RU))
+        self.assertIsNone(parse("Мама, переключись на Арамко", RU))
+
     def test_not_a_command(self):
         # Only at the start of a phrase, and a long tail is a request, not a session name.
         self.assertIsNone(parse("Я хочу, чтобы ты переключился на другую задачу.", RU))

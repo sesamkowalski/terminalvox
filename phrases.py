@@ -8,6 +8,15 @@ import re
 from dataclasses import dataclass
 from typing import Callable
 
+# Words a command may start with: "so, switch to …", «итак, э-э, переключись на …». The fillers come
+# from speech recognition as-is: "um", «э-э-э», «м-м».
+_SEP = r"[,.…\s]+"
+EN_INTRO = rf"^(?:(?:ok(?:ay)?|now|please|so|and|let's|well|alright|right|hey|u+m+|u+h+|e+r+m*|h?m+)\b{_SEP})*"
+RU_INTRO = (
+    r"^(?:(?:ну|давай|а|и|так\s+вот|итак|так|вот|теперь|пожалуйста|слушай|ок(?:ей)?|окей|хорошо"
+    rf"|(?:э+|а+|м+)(?:-(?:э+|а+|м+))*)(?![а-яё]){_SEP})*"
+)
+
 
 @dataclass(frozen=True)
 class Phrases:
@@ -138,20 +147,20 @@ EN = Phrases(
     just_started=", just started",
     now="Now: ",
     switch=re.compile(
-        r"^(?:(?:ok(?:ay)?|now|please|so|and|let's)[,\s]+)*(?:switch|change|jump|hop)\s+(?:back\s+|over\s+)?(?:to|into)\s+(?P<name>.+)$",
+        EN_INTRO + r"(?:switch|change|jump|hop)\s+(?:back\s+|over\s+)?(?:to|into)\s+(?P<name>.+)$",
         re.I | re.S,
     ),
     switch_weak=re.compile(
-        r"^(?:(?:ok(?:ay)?|now|please|so|and|let's)[,\s]+)*(?:go|get|come|move)\s+(?:back\s+)?(?:over\s+)?(?:to|into)\s+(?P<name>.+)$",
+        EN_INTRO + r"(?:go|get|come|move)\s+(?:back\s+)?(?:over\s+)?(?:to|into)\s+(?P<name>.+)$",
         re.I | re.S,
     ),
     switch_back=re.compile(
-        r"^(?:(?:ok(?:ay)?|now|please|so|and|let's)[,\s]+)*(?:(?:go|switch|get|come|jump|hop|move)\s+)?back(?:\s+please)?[\s.!…]*$",
+        EN_INTRO + r"(?:(?:go|switch|get|come|jump|hop|move)\s+)?back(?:\s+please)?[\s.!…]*$",
         re.I,
     ),
     list_sessions=re.compile(
-        r"^(?:(?:ok(?:ay)?|so|and)[,\s]+)*(?:what|which)\s+sessions(?:\s+(?:are\s+there|do\s+(?:i|we)\s+have|are\s+(?:open|running)))?"
-        r"|^(?:(?:ok(?:ay)?|so|and|please)[,\s]+)*(?:list|show)(?:\s+(?:me|the|my))*\s+sessions(?:\s+please)?[\s.?!]*$",
+        EN_INTRO + r"(?:what|which)\s+sessions(?:\s+(?:are\s+there|do\s+(?:i|we)\s+have|are\s+(?:open|running)))?"
+        r"|" + EN_INTRO + r"(?:list|show)(?:\s+(?:me|the|my))*\s+sessions(?:\s+please)?[\s.?!]*$",
         re.I,
     ),
     name_noise=r"\b(the|session|project|window|tab|please)\b",
@@ -238,25 +247,25 @@ RU = Phrases(
     just_started=", только начал",
     now="Сейчас: ",
     switch=re.compile(
-        r"^(?:(?:ну|давай|а|так|теперь|пожалуйста)[,\s]+)*(?:переключи(?:сь|те|тесь)?|переключаемся|switch)\s+(?:обратно\s+)?(?:на|в|во|к|ко|to)\s+(?P<name>.+)$",
+        RU_INTRO + r"(?:переключи(?:сь|те|тесь)?|переключаемся|switch)\s+(?:обратно\s+)?(?:на|в|во|к|ко|to)\s+(?P<name>.+)$",
         re.I | re.S,
     ),
     switch_weak=re.compile(
-        r"^(?:(?:ну|давай|а|так|теперь|пожалуйста)[,\s]+)*(?:перейди(?:те)?|переходим|вернись|вернитесь|вернёмся|вернемся|возвращаемся)\s+(?:обратно\s+)?(?:на|в|во|к|ко)\s+(?P<name>.+)$",
+        RU_INTRO + r"(?:перейди(?:те)?|переходим|вернись|вернитесь|вернёмся|вернемся|возвращаемся)\s+(?:обратно\s+)?(?:на|в|во|к|ко)\s+(?P<name>.+)$",
         re.I | re.S,
     ),
     switch_back=re.compile(
-        r"^(?:(?:ну|давай|а|так|теперь|пожалуйста|ок(?:ей)?)[,\s]+)*"
+        RU_INTRO + r""
         r"(?:(?:вернись|вернитесь|вернёмся|вернемся|возвращаемся|переключись|переключи|переключаемся|иди|пошли)\s+)?"
         r"(?:обратно|назад)(?:\s+пожалуйста)?[\s.!…]*$",
         re.I,
     ),
     list_sessions=re.compile(
-        r"^(?:(?:ну|а|так|и)[,\s]+)*(?:какие(?:\s+(?:есть|у\s+(?:меня|нас)|открыты|сейчас))*\s+сессии(?:\s+(?:есть|открыты))?"
-        r"|(?:покажи|перечисли|назови)\s+сессии|список\s+сессий)[\s.?!]*$",
+        RU_INTRO + r"(?:какие(?:\s+(?:есть|у\s+(?:меня|нас)|открыты|сейчас))*\s+сессии?(?:\s+(?:есть|открыты))?"
+        r"|(?:покажи|перечисли|назови)\s+сессии?|список\s+сессий)[\s.?!]*$",
         re.I,
     ),
-    name_noise=r"\b(сесси[юяией]|проект[аеу]?|окн[оау]|session|project)\b",
+    name_noise=r"\b(сесси[юяией]?|проект[аеу]?|окн[оау]|session|project)\b",
     ordinals=[r"\b(перв|один|одну)", r"\b(втор|два|две)", r"\b(трет|три)"],
     switch_which="Есть {options}. Какую?",
     switch_none="Не нашёл сессию {name}.",
