@@ -169,6 +169,10 @@ Everything is set in `.env`; see the comments in `.env.example`. The main ones:
 - `VOICE_LANG`: `en` (default) or `ru`, the language of recognition, synthesis and the bot's own phrases.
 - `ELEVENLABS_VOICE_ID`: the voice; the default depends on the language. List your voices with
   `GET https://api.elevenlabs.io/v2/voices`; add new ones from the ElevenLabs voice library.
+- `TTS_PROVIDER=google`: synthesis by Google Cloud Chirp 3 HD instead of ElevenLabs, several times cheaper.
+  Create a project, enable the Text-to-Speech API, create a service account with a JSON key and put it at
+  `GOOGLE_CREDENTIALS` (`google-tts.json`). `GOOGLE_TTS_VOICE`, for example `ru-RU-Chirp3-HD-Charon`;
+  speech recognition stays on ElevenLabs.
 - `CLAUDE_TMUX_SESSION`, `CLAUDE_CWD`: name and working directory of the dedicated session.
   `TMUX_TARGET`: the default session when nothing is chosen in the UI (`=session:window.pane` or a pane
   `%id`; `=` means an exact name, otherwise tmux may match another window by prefix).

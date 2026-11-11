@@ -75,6 +75,12 @@ if VOICE_LANG not in LANGS:
 PHRASES = LANGS[VOICE_LANG]
 VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID") or PHRASES.voice
 TTS_MODEL = os.getenv("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5")
+# Speech synthesis: ElevenLabs, or Google Cloud Chirp 3 HD (a service account key, much cheaper).
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")
+if TTS_PROVIDER not in ("elevenlabs", "google"):
+    raise SystemExit(f"TTS_PROVIDER={TTS_PROVIDER!r}: supported elevenlabs, google")
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS", "google-tts.json")
+GOOGLE_TTS_VOICE = os.getenv("GOOGLE_TTS_VOICE") or {"en": "en-US", "ru": "ru-RU"}[VOICE_LANG] + "-Chirp3-HD-Charon"
 # Default session when nothing is chosen in the UI. Empty: echo instead of Claude Code.
 # A tmux target, e.g. "=voice:0.0" or a pane id "%64".
 TMUX_TARGET = os.getenv("TMUX_TARGET", "")
@@ -428,7 +434,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     body = runner_args.body or {}  # request_data from /api/offer: the choice made in the UI
     target = body.get("pane") or TMUX_TARGET
     session = ClaudeSession(target) if target else None
-    logger.info(f"Mode: {'tmux ' + target if session else 'echo'}, language {VOICE_LANG}")
+    logger.info(f"Mode: {'tmux ' + target if session else 'echo'}, language {VOICE_LANG}, TTS {TTS_PROVIDER}")
     pace = body.get("pace") if body.get("pace") in PACES else "normal"
     hold_secs, max_pause_secs, merge_secs = PACES[pace]
     logger.info(f"Pace: {pace} (hold {hold_secs}s, max pause {max_pause_secs}s, merge {merge_secs}s)")
@@ -437,14 +443,23 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         api_key=ELEVENLABS_API_KEY,
         settings=ElevenLabsRealtimeSTTService.Settings(language=Language(PHRASES.language)),
     )
-    tts = ElevenLabsTTSService(
-        api_key=ELEVENLABS_API_KEY,
-        settings=ElevenLabsTTSService.Settings(
-            voice=VOICE_ID, model=TTS_MODEL, language=Language(PHRASES.language)
-        ),
-        # The default is 3 s: the first ElevenLabs response after connecting can take longer, and audio was dropped.
-        stop_frame_timeout_s=6.0,
-    )
+    if TTS_PROVIDER == "google":
+        from pipecat.services.google.tts import GoogleTTSService
+
+        # Streaming synthesis, Chirp 3 HD voices only; text goes sentence by sentence.
+        tts = GoogleTTSService(
+            credentials_path=GOOGLE_CREDENTIALS,
+            settings=GoogleTTSService.Settings(voice=GOOGLE_TTS_VOICE, language=Language(PHRASES.language)),
+        )
+    else:
+        tts = ElevenLabsTTSService(
+            api_key=ELEVENLABS_API_KEY,
+            settings=ElevenLabsTTSService.Settings(
+                voice=VOICE_ID, model=TTS_MODEL, language=Language(PHRASES.language)
+            ),
+            # The default is 3 s: the first ElevenLabs response after connecting can take longer, and audio was dropped.
+            stop_frame_timeout_s=6.0,
+        )
 
     user_aggregator, _ = LLMContextAggregatorPair(
         LLMContext(),

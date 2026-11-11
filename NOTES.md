@@ -336,3 +336,11 @@ is persisted in tailscaled's state anyway.
 - Now `run.sh` runs `uv sync` and `exec .venv/bin/python`, so python is the unit's main process and
   `KillMode=process` still leaves tmux and claude alone. On SIGTERM bot.py first cancels the call
   pipelines (`RUNNERS`), then calls uvicorn's handler. With a call open it exits in 0.3 s.
+
+## Google speech synthesis (2026-11-11)
+
+- `TTS_PROVIDER=google`: Chirp 3 HD through `GoogleTTSService` (streaming gRPC, Chirp 3 HD and Journey
+  voices only), with a service account key; Pipecat doesn't take a plain API key. ru-RU has 8 Chirp 3 HD
+  voices: male Charon, Fenrir, Orus, Puck, female Aoede, Kore, Leda, Zephyr. About $30 per million characters.
+- Echo-mode selftest: 1.2-1.5 s to the first sound against 1.0 s with ElevenLabs, Google TTFB 0.06-0.37 s,
+  barge-in after 0.8 s.
