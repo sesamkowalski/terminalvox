@@ -1,0 +1,4 @@
+# Words the synthesizer stresses wrongly: one word form per line, the stressed vowel in capitals.
+# Only for TTS_PROVIDER=google (Azure ignores stress marks).
+перезапущУ
+запущУ

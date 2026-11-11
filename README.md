@@ -172,7 +172,11 @@ Everything is set in `.env`; see the comments in `.env.example`. The main ones:
 - `TTS_PROVIDER=google`: synthesis by Google Cloud Chirp 3 HD instead of ElevenLabs, several times cheaper.
   Create a project, enable the Text-to-Speech API, create a service account with a JSON key and put it at
   `GOOGLE_CREDENTIALS` (`google-tts.json`). `GOOGLE_TTS_VOICE`, for example `ru-RU-Chirp3-HD-Charon`;
-  speech recognition stays on ElevenLabs.
+  `stress.txt`: words Google stresses wrongly, one per line with the stressed vowel in capitals
+  (`перезапущУ`); a stress mark is added before synthesis.
+- `STT_PROVIDER=google`: recognition by Google Speech-to-Text v2 with the same key (enable the
+  Speech-to-Text API and give the service account the Cloud Speech Client role). `GOOGLE_STT_MODEL`
+  (`latest_long`), `GOOGLE_STT_LOCATION` (`global`).
 - `CLAUDE_TMUX_SESSION`, `CLAUDE_CWD`: name and working directory of the dedicated session.
   `TMUX_TARGET`: the default session when nothing is chosen in the UI (`=session:window.pane` or a pane
   `%id`; `=` means an exact name, otherwise tmux may match another window by prefix).

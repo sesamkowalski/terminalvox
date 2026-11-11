@@ -344,3 +344,7 @@ is persisted in tailscaled's state anyway.
   voices: male Charon, Fenrir, Orus, Puck, female Aoede, Kore, Leda, Zephyr. About $30 per million characters.
 - Echo-mode selftest: 1.2-1.5 s to the first sound against 1.0 s with ElevenLabs, Google TTFB 0.06-0.37 s,
   barge-in after 0.8 s.
+- Stress: Chirp 3 HD stresses by context and gets some words wrong, but follows U+0301 after the stressed
+  vowel. `stress.txt` (stressed vowel in capitals) is applied through `text_transforms` of
+  `GoogleTTSService`, so only the text sent to synthesis changes. Azure ignores the mark.
+- `STT_PROVIDER=google` needs the Cloud Speech Client role on the service account (synthesis needs none).

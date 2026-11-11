@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.datastructures import Headers
 
 from bridge import ClaudeSession, TmuxBridge, list_sessions
+import stress
 from commands import parse_aliases
 from phrases import LANGS
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
@@ -79,7 +80,14 @@ TTS_MODEL = os.getenv("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5")
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")
 if TTS_PROVIDER not in ("elevenlabs", "google"):
     raise SystemExit(f"TTS_PROVIDER={TTS_PROVIDER!r}: supported elevenlabs, google")
+# Speech recognition: ElevenLabs Scribe, or Google Cloud Speech-to-Text v2 (same key as for synthesis).
+STT_PROVIDER = os.getenv("STT_PROVIDER", "elevenlabs")
+if STT_PROVIDER not in ("elevenlabs", "google"):
+    raise SystemExit(f"STT_PROVIDER={STT_PROVIDER!r}: supported elevenlabs, google")
+GOOGLE_STT_MODEL = os.getenv("GOOGLE_STT_MODEL", "latest_long")  # chirp_3 needs GOOGLE_STT_LOCATION=us or eu
+GOOGLE_STT_LOCATION = os.getenv("GOOGLE_STT_LOCATION", "global")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS", "google-tts.json")
+STRESS_FILE = os.getenv("STRESS_FILE", "stress.txt")  # stress marks for Google synthesis, see stress.py
 GOOGLE_TTS_VOICE = os.getenv("GOOGLE_TTS_VOICE") or {"en": "en-US", "ru": "ru-RU"}[VOICE_LANG] + "-Chirp3-HD-Charon"
 # Default session when nothing is chosen in the UI. Empty: echo instead of Claude Code.
 # A tmux target, e.g. "=voice:0.0" or a pane id "%64".
@@ -434,22 +442,39 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     body = runner_args.body or {}  # request_data from /api/offer: the choice made in the UI
     target = body.get("pane") or TMUX_TARGET
     session = ClaudeSession(target) if target else None
-    logger.info(f"Mode: {'tmux ' + target if session else 'echo'}, language {VOICE_LANG}, TTS {TTS_PROVIDER}")
+    logger.info(f"Mode: {'tmux ' + target if session else 'echo'}, language {VOICE_LANG}, STT {STT_PROVIDER}, TTS {TTS_PROVIDER}")
     pace = body.get("pace") if body.get("pace") in PACES else "normal"
     hold_secs, max_pause_secs, merge_secs = PACES[pace]
     logger.info(f"Pace: {pace} (hold {hold_secs}s, max pause {max_pause_secs}s, merge {merge_secs}s)")
 
-    stt = ElevenLabsRealtimeSTTService(
-        api_key=ELEVENLABS_API_KEY,
-        settings=ElevenLabsRealtimeSTTService.Settings(language=Language(PHRASES.language)),
-    )
+    if STT_PROVIDER == "google":
+        from pipecat.services.google.stt import GoogleSTTService
+
+        stt = GoogleSTTService(
+            credentials_path=GOOGLE_CREDENTIALS,
+            location=GOOGLE_STT_LOCATION,
+            settings=GoogleSTTService.Settings(
+                languages=[Language({"en": "en-US", "ru": "ru-RU"}[VOICE_LANG])], model=GOOGLE_STT_MODEL
+            ),
+        )
+    else:
+        stt = ElevenLabsRealtimeSTTService(
+            api_key=ELEVENLABS_API_KEY,
+            settings=ElevenLabsRealtimeSTTService.Settings(language=Language(PHRASES.language)),
+        )
     if TTS_PROVIDER == "google":
         from pipecat.services.google.tts import GoogleTTSService
 
         # Streaming synthesis, Chirp 3 HD voices only; text goes sentence by sentence.
+        stress_words = stress.load(STRESS_FILE)
+
+        async def add_stress(text: str, text_type: str) -> str:
+            return stress.stress(text, stress_words)
+
         tts = GoogleTTSService(
             credentials_path=GOOGLE_CREDENTIALS,
             settings=GoogleTTSService.Settings(voice=GOOGLE_TTS_VOICE, language=Language(PHRASES.language)),
+            text_transforms=[("*", add_stress)],
         )
     else:
         tts = ElevenLabsTTSService(
