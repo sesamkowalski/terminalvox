@@ -3,6 +3,7 @@
 Run: ./run.sh or uv run bot.py   (see README.md)
 """
 
+import asyncio
 import json
 import os
 
@@ -10,6 +11,7 @@ import os
 _ENV = dict(os.environ)
 
 import secrets
+import signal
 import subprocess
 import time
 from datetime import datetime
@@ -129,6 +131,28 @@ def _log_to_file():
 
 
 app.router.add_event_handler("startup", _log_to_file)
+
+RUNNERS: set = set()  # pipelines of the calls in progress
+
+
+async def _end_calls_on_sigterm():
+    # A call is a background task of its /api/offer request, and uvicorn waits for open requests before
+    # it shuts down: on SIGTERM the server stopped listening but stayed alive until the call ended.
+    # So end the calls first, then let uvicorn's handler do the rest.
+    loop = asyncio.get_running_loop()
+    uvicorn_handler = signal.getsignal(signal.SIGTERM)
+
+    def handler(sig, frame):
+        logger.info(f"SIGTERM: ending {len(RUNNERS)} call(s)")
+        for runner in list(RUNNERS):
+            loop.call_soon_threadsafe(lambda r=runner: loop.create_task(r.cancel()))
+        if callable(uvicorn_handler):
+            uvicorn_handler(sig, frame)
+
+    signal.signal(signal.SIGTERM, handler)
+
+
+app.router.add_event_handler("startup", _end_calls_on_sigterm)
 
 # Tailscale logins allowed to connect through `tailscale serve` (comma-separated).
 # Unset: the owner of this machine (see _tailnet_users).
@@ -471,7 +495,11 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             ACTIVE["bridge"] = None
         await runner.cancel()
 
-    await runner.run()
+    RUNNERS.add(runner)
+    try:
+        await runner.run()
+    finally:
+        RUNNERS.discard(runner)
 
 
 async def bot(runner_args: RunnerArguments):

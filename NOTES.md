@@ -323,3 +323,13 @@ is persisted in tailscaled's state anyway.
   claude). `switch()` remembers the previous session on every switch, the page's included, so saying it
   again toggles between the two. Its pane is checked against `list_sessions()`: gone means "Session X is
   closed", no switch yet means "There's nowhere to go back to".
+
+## Stopping the service (2026-11-11)
+
+- `restart` timed out and the old python lived on with the call. Two causes. Snap uv puts its child
+  into a scope of its own (`snap.astral-uv.uv-*.scope`), outside the unit's cgroup, so systemd killed only
+  uv. And a call is a background task of its `/api/offer` request: on SIGTERM uvicorn stops listening but
+  waits for open requests, i.e. for the call to end.
+- Now `run.sh` runs `uv sync` and `exec .venv/bin/python`, so python is the unit's main process and
+  `KillMode=process` still leaves tmux and claude alone. On SIGTERM bot.py first cancels the call
+  pipelines (`RUNNERS`), then calls uvicorn's handler. With a call open it exits in 0.3 s.

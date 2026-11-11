@@ -9,11 +9,11 @@ WorkingDirectory=@DIR@
 Environment=PATH=%h/.local/bin:/snap/bin:/usr/local/bin:/usr/bin:/bin
 Environment=LOG_DIR=@LOG_DIR@
 ExecStart=@DIR@/run.sh
-# Stop only the server (uv forwards the signal to python). If run.sh started the tmux server itself,
-# it and the claude sessions must survive stop/restart.
+# Stop only the server: python is the main process (run.sh execs it). If run.sh started the tmux server
+# itself, it and the claude sessions are in this unit too and must survive stop/restart.
 KillMode=process
 TimeoutStopSec=15
-# uv passes on python's exit code on SIGTERM (128+15): a normal stop.
+# Exit code 128+15 after SIGTERM is a normal stop.
 SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5

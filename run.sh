@@ -26,4 +26,7 @@ else
   echo "Tailscale is not connected: access from this machine only (http://localhost:$PORT/)"
 fi
 
-exec uv run bot.py -t webrtc --host 127.0.0.1 --port "$PORT"
+# Not `exec uv run`: snap uv puts its child into a scope of its own, outside the systemd unit, so on stop
+# only uv was killed and python lived on. python itself is the service's main process.
+uv sync --inexact --quiet
+exec .venv/bin/python bot.py -t webrtc --host 127.0.0.1 --port "$PORT"
