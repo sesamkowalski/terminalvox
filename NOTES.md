@@ -384,3 +384,15 @@ herdr behind one interface, picked by the shape of the id; the session list is s
 - Tested in a separate `herdr --session tvtest` (run inside a throwaway tmux session): Russian text, an
   image, Escape during a reply (0.17 s) with the restored text cleared, the voice loop through a bot on
   7874 (the phrase in the pane 0.17 s after the end of speech).
+- The dedicated session (2026-11-17): `start-session.sh` creates it in tmux, or in herdr when there is no
+  tmux (`CLAUDE_MUX`), and prints the bot's target. Without a running herdr server it starts a headless
+  `herdr server`, which, like the app, restores the saved workspaces.
+- Numbers in herdr ids go on in letters: `w9`, `wA`, … (alphabet `123456789ABCDEFGHJKMNPQRSTVWXYZ0`).
+  The first pattern was `w\d+`, and panes like `wA:p1` went to tmux.
+- Only a separate data directory isolates a test herdr server. `HERDR_SOCKET_PATH` moves just the
+  socket: a second server on the default session's data restored all the user's workspaces (some 30
+  `claude --resume` copies) and overwrote `~/.config/herdr/session.json`. Restored from
+  `session-snapshots/`, where herdr keeps the previous version before each write. Inside a herdr pane the
+  inherited `HERDR_SOCKET_PATH` wins over both `HERDR_SESSION` and `XDG_CONFIG_HOME`. What worked:
+  `env -u HERDR_SOCKET_PATH -u HERDR_ENV XDG_CONFIG_HOME=~/.cache/tvx herdr …` (a short path: socket
+  paths are length-limited).

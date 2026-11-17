@@ -28,6 +28,7 @@ def fake_run(*args, input=None):
 class Mux(unittest.TestCase):
     def test_backend_by_id(self):
         self.assertIs(mux.of("w2:p1"), mux.HERDR)
+        self.assertIs(mux.of("wD:p1A"), mux.HERDR)
         self.assertIs(mux.of("%64"), mux.TMUX)
         self.assertIs(mux.of("=voice:0.0"), mux.TMUX)
 

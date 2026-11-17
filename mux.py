@@ -1,7 +1,7 @@
 """Terminal multiplexers that host Claude Code sessions: tmux and herdr (https://herdr.dev).
 
 Both are driven through their CLIs (a call takes about 3 ms either way). A pane id says which one owns
-it: herdr ids look like "w2:p1", everything else ("%64", "=voice:0.0") is a tmux target. Sessions of
+it: herdr ids look like "w2:p1" or "wD:p1", everything else ("%64", "=voice:0.0") is a tmux target. Sessions of
 both show up in one list; a multiplexer that isn't installed or running just contributes nothing.
 
 Keys are herdr's names ("esc", "ctrl+u", "enter"); the tmux backend translates them.
@@ -71,7 +71,8 @@ class Tmux:
 class Herdr:
     """The default herdr session, or the one HERDR_SOCKET_PATH points to."""
 
-    ID = re.compile(r"^w\d+:p\d+$")
+    # Numbers in herdr ids go on in letters: w9, wA, …, wZ, w11 (herdr's workspace.rs).
+    ID = re.compile(r"^w[0-9A-Za-z]+:p[0-9A-Za-z]+$")
 
     def available(self) -> bool:
         return shutil.which("herdr") is not None

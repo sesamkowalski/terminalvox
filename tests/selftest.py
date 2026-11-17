@@ -14,7 +14,7 @@ Measured on the client side, i.e. including network and buffers:
 - bargein: start of the interrupting phrase -> silence on the bot's channel;
 - backchannel: whether "mm-hm" cuts off the bot's speech.
 
-Without a pane the bot runs in echo mode (start it with TMUX_TARGET unset); the "long" phrase
+Without a pane the bot runs in echo mode (start it with MUX_TARGET unset); the "long" phrase
 makes the echo reply long enough to interrupt.
 """
 

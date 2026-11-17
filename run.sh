@@ -1,15 +1,15 @@
 #!/bin/bash
-# One command: a dedicated Claude Code session in tmux (if there isn't one yet) + the voice server.
+# One command: a dedicated Claude Code session in tmux or herdr (if there isn't one yet) + the voice server.
 # The server listens on 127.0.0.1 only; from other devices it is reachable via `tailscale serve` (HTTPS in your tailnet).
 set -e
 cd "$(dirname "$0")"
 [ -f .env ] || { echo "no .env: copy .env.example to .env and set ELEVENLABS_API_KEY"; exit 1; }
 set -a; . ./.env; set +a
 
-SESSION=${CLAUDE_TMUX_SESSION:-voice}
 PORT=${PORT:-7860}
-./start-session.sh "$SESSION"
-export TMUX_TARGET=${TMUX_TARGET:-=$SESSION:0.0}  # "=": exact session name, no prefix matching
+TARGET=$(./start-session.sh)
+# The default session of a call: MUX_TARGET (or its old name TMUX_TARGET), else the dedicated one.
+export MUX_TARGET=${MUX_TARGET:-${TMUX_TARGET:-$TARGET}}
 
 if [ "${TAILSCALE_SERVE:-1}" = 0 ]; then
   echo "tailscale serve skipped (TAILSCALE_SERVE=0)"
