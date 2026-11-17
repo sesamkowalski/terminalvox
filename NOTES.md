@@ -348,3 +348,39 @@ is persisted in tailscaled's state anyway.
   vowel. `stress.txt` (stressed vowel in capitals) is applied through `text_transforms` of
   `GoogleTTSService`, so only the text sent to synthesis changes. Azure ignores the mark.
 - `STT_PROVIDER=google` needs the Cloud Speech Client role on the service account (synthesis needs none).
+
+## Local Silero synthesis (2026-11-12)
+
+- `TTS_PROVIDER=silero`: the model (v5_6_ru) lives in a service of its own, `silero/server.py`, with its own
+  uv project (torch CPU, about 860 MB of venv) and unit `terminalvox-silero`. It loads in about 6 s and keeps
+  about 780 MB; bot restarts don't touch it. The protocol is that of Piper's HTTP server (POST JSON -> WAV)
+  plus `rate` and `pitch` per request; the bot's client is `silero_tts.py`.
+- Silero's alphabet is Cyrillic and `!+,-.:;?–…`: Latin letters and digits are dropped silently, and Latin
+  inside SSML fails with "Failed to parse SSML". `ru_normalize.py` spells numbers (num2words), Latin words
+  (`latin.txt`, else letters or rough transliteration) and symbols; the service also drops anything outside
+  the alphabet. Manual stress: `+` before the vowel (`stress.stress(..., plus=True)`).
+- Prosody has five levels each (pitch also `robo`); a percentage is snapped to the nearest level.
+- Silero resets torch threads to 1 on load. On the 12-core Xeon: 1 thread 1.05 s per reply, 4 — 0.34,
+  8 — 0.23, 12 — 0.28. Default 8.
+- Echo selftest: 0.82-0.98 s to the first sound (Google 1.2-1.7, ElevenLabs 1.0), TTFB about 0.06 s.
+  With the service stopped the bot stays up and logs "Silero ... is not reachable".
+
+## herdr next to tmux (2026-11-15)
+
+herdr 0.9.5 (https://herdr.dev): a multiplexer for agents, pane ids like `w2:p1`. `mux.py` puts tmux and
+herdr behind one interface, picked by the shape of the id; the session list is shared.
+- claude in herdr has no `tmux`-like field in `~/.claude/sessions/<pid>.json`. The pane is found via
+  `herdr pane list` (`agent: "claude"`, detected from the screen, no integration needed), then
+  `pane process-info` → the claude pid → the session json.
+- A `herdr` CLI call takes about 3 ms, like `tmux`, so no own socket client. The bot, a systemd service
+  outside herdr, talks to the default session; `HERDR_SOCKET_PATH` selects another one.
+- `pane send-text` writes raw bytes. An image is pasted as `\e[200~path\e[201~` (claude turns bracketed
+  paste on) and shows up as `[Image #1]`, as with tmux. The path must be absolute; a relative one was
+  pasted as text.
+- `pane read --source visible` gives the plain screen text, like `capture-pane -p`. Keys: `esc`, `ctrl+u`,
+  `enter`.
+- `pane move` to another workspace gives the pane a new id, but the old one keeps working (an alias), so
+  a call isn't dropped. "Go back" and "already there" compare ids through `mux.current`.
+- Tested in a separate `herdr --session tvtest` (run inside a throwaway tmux session): Russian text, an
+  image, Escape during a reply (0.17 s) with the restored text cleared, the voice loop through a bot on
+  7874 (the phrase in the pane 0.17 s after the end of speech).

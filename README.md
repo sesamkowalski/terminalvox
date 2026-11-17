@@ -21,7 +21,7 @@ Built on [Pipecat](https://github.com/pipecat-ai/pipecat). English and Russian a
 
 ## Requirements
 
-- Linux or macOS with [tmux](https://github.com/tmux/tmux), [uv](https://docs.astral.sh/uv/) and
+- Linux or macOS with [tmux](https://github.com/tmux/tmux) and/or [herdr](https://herdr.dev), [uv](https://docs.astral.sh/uv/) and
   [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) (`claude` on the `PATH`).
   The systemd service is Linux only; tested on Ubuntu.
 - An [ElevenLabs](https://elevenlabs.io) API key (speech recognition and synthesis).
@@ -47,7 +47,9 @@ Open `http://localhost:7860/` on the same machine, or the printed `https://<mach
 from another device in your tailnet. Pick a session, allow the microphone and press Connect.
 
 Restarting the server (Ctrl+C, `./run.sh`) doesn't touch the claude sessions. To look at the dedicated
-session: `tmux attach -t voice`. Any other claude session running in tmux shows up in the list too.
+session: `tmux attach -t voice`. Any other claude session running in tmux shows up in the list too, and so do claude sessions in
+[herdr](https://herdr.dev) panes (its default session, or the one `HERDR_SOCKET_PATH` points to): one
+list, and you can switch between the two.
 
 ### In the background, as a systemd user service (Linux)
 
@@ -100,8 +102,9 @@ Photos sent during a call are stored in `~/.cache/terminalvox/images` for 7 days
 
 ## The page
 
-- **Session**: live Claude Code sessions in tmux (from `~/.claude/sessions/*.json`), most recently active
-  first, with search by name, window and folder. Sessions outside tmux are not listed. Badges show that a
+- **Session**: live Claude Code sessions in tmux and herdr (from `~/.claude/sessions/*.json`), most recently
+  active first, with search by name, window (herdr: tab or workspace) and folder. Sessions outside a
+  multiplexer are not listed. Badges show that a
   session is working or waiting for an answer in the terminal. You can change the choice during a call:
   the bot says "Switching to …" and continues with the new session.
 - **Inject voice mode messages** (on by default):
@@ -174,12 +177,21 @@ Everything is set in `.env`; see the comments in `.env.example`. The main ones:
   `GOOGLE_CREDENTIALS` (`google-tts.json`). `GOOGLE_TTS_VOICE`, for example `ru-RU-Chirp3-HD-Charon`;
   `stress.txt`: words Google stresses wrongly, one per line with the stressed vowel in capitals
   (`перезапущУ`); a stress mark is added before synthesis.
+- `TTS_PROVIDER=silero`: local Russian synthesis by [Silero](https://github.com/snakers4/silero-models),
+  free and offline, on the CPU (about 0.1 s per sentence on a 2011 Xeon). It runs as a separate service
+  so the model (about 800 MB of memory) loads once: `make silero-install`, then `make silero-status`.
+  The first start downloads torch (CPU) and the model. `SILERO_VOICE` (`xenia`, also `aidar`, `baya`,
+  `kseniya`, `eugene`); the service's defaults `SILERO_RATE` (`x-slow` ... `x-fast`), `SILERO_PITCH`
+  (`x-low` ... `x-high`), `SILERO_THREADS`. Silero reads Cyrillic only, so numbers and Latin words are
+  spelled out first: add how to say words to `latin.txt` (`commit = коммит`). The models are licensed
+  CC BY-NC-SA 4.0: non-commercial use.
 - `STT_PROVIDER=google`: recognition by Google Speech-to-Text v2 with the same key (enable the
   Speech-to-Text API and give the service account the Cloud Speech Client role). `GOOGLE_STT_MODEL`
   (`latest_long`), `GOOGLE_STT_LOCATION` (`global`).
 - `CLAUDE_TMUX_SESSION`, `CLAUDE_CWD`: name and working directory of the dedicated session.
-  `TMUX_TARGET`: the default session when nothing is chosen in the UI (`=session:window.pane` or a pane
-  `%id`; `=` means an exact name, otherwise tmux may match another window by prefix).
+  `MUX_TARGET` (old name `TMUX_TARGET`): the default session when nothing is chosen in the UI
+  (`=session:window.pane` or a pane `%id`; `=` means an exact name, otherwise tmux may match another
+  window by prefix; or a herdr pane id like `w2:p1`).
 - `HOLD_SECS` (2.5): how long to wait for the rest of a cut-off phrase; `0` turns it off.
 - `FILLER_SECS` (1.5), `TOOL_GAP_SECS` (4): fillers and tool announcements; `0` turns them off.
 - `BARGE_IN_SECS`, `VAD_STOP_SECS`, `TURN_MAX_PAUSE_SECS`: the balance between speed and how often the
@@ -193,7 +205,8 @@ Everything is set in `.env`; see the comments in `.env.example`. The main ones:
 ## Files
 
 - `bot.py`: the Pipecat pipeline, interruption strategy, timings, access control and HTTP routes.
-- `bridge.py`: the tmux bridge: session list, sending, switching, transcript tailing, fillers, tool
+- `mux.py`: tmux and herdr behind one interface: list panes, read the screen, type, press keys, paste.
+- `bridge.py`: the bridge to the session: session list, sending, switching, transcript tailing, fillers, tool
   announcements, markdown cleanup.
 - `phrases.py`: everything the bot says and the spoken commands it recognizes, per language.
 - `commands.py`: parsing of voice commands and fuzzy matching of spoken session names.

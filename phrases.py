@@ -11,9 +11,9 @@ from typing import Callable
 # Words a command may start with: "so, switch to …", «итак, э-э, переключись на …». The fillers come
 # from speech recognition as-is: "um", «э-э-э», «м-м».
 _SEP = r"[,.…\s]+"
-EN_INTRO = rf"^(?:(?:ok(?:ay)?|now|please|so|and|let's|well|alright|right|hey|u+m+|u+h+|e+r+m*|h?m+)\b{_SEP})*"
+EN_INTRO = rf"^(?:(?:ok(?:ay)?|yes|yeah|now|please|so|and|let's|well|alright|right|hey|u+m+|u+h+|e+r+m*|h?m+)\b{_SEP})*"
 RU_INTRO = (
-    r"^(?:(?:ну|давай|а|и|так\s+вот|итак|так|вот|теперь|пожалуйста|слушай|ок(?:ей)?|окей|хорошо"
+    r"^(?:(?:ну|да|давай|а|и|так\s+вот|итак|так|вот|теперь|пожалуйста|слушай|ок(?:ей)?|окей|хорошо"
     rf"|(?:э+|а+|м+)(?:-(?:э+|а+|м+))*)(?![а-яё]){_SEP})*"
 )
 
@@ -33,7 +33,10 @@ class Phrases:
     bash: list[tuple[str, str]]
     bash_default: str
     mcp: str
-    fillers: list[str]  # said when Claude stays silent after a phrase
+    fillers: list[str]  # said when Claude stays silent after a phrase that fits no kind below
+    # The filler by the kind of phrase, first match (bridge.filler_choices); [] means stay silent.
+    # Matched in lower case, without stretched vowels and leading "um"s.
+    filler_kinds: list[tuple[re.Pattern, list[str]]]
     # Injected into the Claude session (see voice-rules.md).
     voice_on: str
     voice_off: str
@@ -90,7 +93,9 @@ EN = Phrases(
         r"^\W*((um+|uh+|hey|so|well)[-\s,.…]+)*(are\s+you\s+(there|here|alive|still\s+(there|here|working))"
         r"|you\s+(there|still\s+there)|how('s|\s+is)\s+(it|everything)\s+going|how\s+are\s+(you|things)(\s+doing)?"
         r"|what\s+are\s+you\s+doing|what's\s+(up|happening|the\s+status)|any\s+progress"
-        r"|(are\s+you|is\s+it)\s+done(\s+yet)?|still\s+working|hello|ping)\b[^.?!]{0,12}[.?!…]*\s*$",
+        r"|(are\s+you|is\s+it)\s+done(\s+yet)?|still\s+working|hello|ping)\b[^.?!]{0,12}[.?!…]*\s*$"
+        # "Are you there?" with the first words lost after a long silence.
+        r"|^\W*((um+|uh+|hey|so)[-\s,.…]+)*(there|still\s+there)[.?!…]*\s*$",
         re.I,
     ),
     hesitation=re.compile(r"^[\W_]*((um+|uh+|so|well|or)[-\s,.…]*)*$", re.I),
@@ -111,7 +116,7 @@ EN = Phrases(
         "Artifact": "Preparing a page.",
     },
     bash=[
-        (r"\bpytest\b|\b(npm|cargo|go) test\b", "Running tests."),
+        (r"((uv run|python3? -m) )?pytest\b|(npm|cargo|go) test\b", "Running tests."),
         (r"\bssh\b|\bscp\b|\brsync\b", "Connecting to a server."),
         (r"\bgh\b", "Checking GitHub."),
         (r"\bgit\b", "Checking git."),
@@ -125,7 +130,19 @@ EN = Phrases(
     ],
     bash_default="Running a command.",
     mcp="Calling an external service.",
-    fillers=["One sec.", "Let me check.", "Just a moment.", "OK, looking.", "Got it, on it.", "Mm-hm, one moment."],
+    fillers=["One sec.", "Mm-hm.", "Got it."],
+    filler_kinds=[
+        # A reaction or agreement: Claude answers it quickly itself.
+        (re.compile(r"^(yes|yeah|yep|ok(ay)?|sure|right|great|good|fine|cool|got it|thanks?|thank you|nice|alright|over)"
+                    r"\b\W*(\w+\W*){0,3}$"), []),
+        (re.compile(r"^(no|nope|not that|don't|do not|stop|wait|hold on)\b"), ["Got it.", "OK."]),
+        (re.compile(r"\b(look|check|find|search|show|open|remind|read|review)\b"),
+         ["Let me look.", "Checking.", "Looking."]),
+        (re.compile(r"\b(make|add|fix|write|save|run|restart|delete|remove|send|change|update|create|commit|push|"
+                    r"build|install)\b"), ["On it.", "OK, doing it.", "Will do."]),
+        (re.compile(r"\?|^(how|what|why|where|when|which|who|is|are|can|could|should|does|do you|tell me|explain)\b"),
+         ["Let me think.", "Good question, one sec.", "Hmm, let me think."]),
+    ],
     voice_on=(
         "[voice] Voice mode is on: reply to [voice] messages briefly, conversationally and without markdown,"
         " put details in files, don't write the [voice] tag in your replies (rules in ~/.claude/CLAUDE.md,"
@@ -171,7 +188,7 @@ EN = Phrases(
     no_previous="There's nowhere to go back to.",
     previous_closed="Session {name} is closed.",
     sessions="Sessions: {names}.",
-    no_sessions="There are no Claude sessions in tmux.",
+    no_sessions="There are no Claude sessions.",
     or_=" or ",
     echo="You said: {text}",
     echo_long_trigger="long",
@@ -190,7 +207,9 @@ RU = Phrases(
     bye=re.compile(r"^((пока|до свидания|отбой|конец связи|всё,? пока|bye)[-\s.!,]*)+$", re.I),
     checkin=re.compile(
         r"^\W*((ну|эй|алло|а+|э+|м+|или)[-\s,.…]+)*(ты\s+(здесь|тут|где|жив|живой|там)|как\s+(дела|успехи|там|продвигается|оно)"
-        r"|что\s+(там|делаешь|с\s+задачей)|ну\s+что|долго\s+ещё|скоро|алло|ау)\b[^.?!]{0,12}[.?!…]*\s*$",
+        r"|что\s+(там|делаешь|с\s+задачей)|ну\s+что|долго\s+ещё|скоро|алло|ау)\b[^.?!]{0,12}[.?!…]*\s*$"
+        # «Ты здесь?» with the first word lost after a long silence: «Здесь?» alone, nothing after it.
+        r"|^\W*((ну|эй|а+|э+|м+)[-\s,.…]+)*(здесь|тут|жив|живой)[.?!…]*\s*$",
         re.I,
     ),
     hesitation=re.compile(r"^[\W_]*((или|ну|а+|э+|м+)[-\s,.…]*)*$", re.I),
@@ -211,7 +230,7 @@ RU = Phrases(
         "Artifact": "Готовлю страницу.",
     },
     bash=[
-        (r"\bpytest\b|\b(npm|cargo|go) test\b", "Запускаю тесты."),
+        (r"((uv run|python3? -m) )?pytest\b|(npm|cargo|go) test\b", "Запускаю тесты."),
         (r"\bssh\b|\bscp\b|\brsync\b", "Подключаюсь к серверу."),
         (r"\bgh\b", "Смотрю гитхаб."),
         (r"\bgit\b", "Смотрю гит."),
@@ -225,7 +244,21 @@ RU = Phrases(
     ],
     bash_default="Запускаю команду.",
     mcp="Обращаюсь к внешнему сервису.",
-    fillers=["Секунду.", "Сейчас посмотрю.", "Минутку.", "Так, смотрю.", "Понял, сейчас.", "Угу, сейчас."],
+    fillers=["Угу.", "Понял.", "Секунду."],
+    filler_kinds=[
+        # Реакция или согласие: Claude ответит на неё сам и быстро.
+        (re.compile(r"^(да|угу|ага|ок|окей|хорошо|отлично|ладно|понял|понятно|ясно|супер|класс|спасибо|приём|"
+                    r"вроде|норм|нормально)(?![а-яё])\W*([а-яё]+\W*){0,3}$"), []),
+        (re.compile(r"^(нет|не надо|не так|не то|стоп|стой|подожди|погоди|отмена)(?![а-яё])"), ["Понял.", "Хорошо."]),
+        (re.compile(r"(?<![а-яё])(посмотри|проверь|найди|глянь|открой|покажи|напомни|прочитай|поищи|изучи|"
+                    r"разберись|выясни|посмотрим|проверим|глянем|поищем)(?![а-яё])"), ["Сейчас посмотрю.", "Так, смотрю.", "Смотрю."]),
+        (re.compile(r"(?<![а-яё])(сделай|добавь|поправь|исправь|запиши|запусти|перезапусти|удали|пришли|отправь|"
+                    r"поменяй|убери|напиши|создай|закоммить|собери|установи|сделаем|делаем|переделай|включи|"
+                    r"выключи|прогони|прогоним|запустим|попробуем|добавим|поправим|распиши|допиши)(?![а-яё])"), ["Понял, делаю.", "Хорошо, сейчас сделаю.", "Принято."]),
+        (re.compile(r"\?|^(как|что|почему|зачем|где|когда|сколько|какой|какая|какие|каким|какого|кто|если|"
+                    r"можно ли|можно|разве|скажи|подскажи|расскажи|объясни|напомни)(?![а-яё])"),
+         ["Сейчас подумаю.", "Хороший вопрос, секунду.", "Так, подумаю."]),
+    ],
     voice_on=(
         "[voice] Голосовой режим включён: на сообщения с [voice] отвечай коротко, разговорно и без markdown,"
         " подробности пиши в файлы, метку [voice] в ответ не ставь (правила в ~/.claude/CLAUDE.md, раздел «Голосовой режим»)."
@@ -273,7 +306,7 @@ RU = Phrases(
     no_previous="Некуда возвращаться.",
     previous_closed="Сессия {name} закрыта.",
     sessions="Сессии: {names}.",
-    no_sessions="Сессий Claude в tmux нет.",
+    no_sessions="Сессий Claude нет.",
     or_=" или ",
     echo="Вы сказали: {text}",
     echo_long_trigger="длинн",

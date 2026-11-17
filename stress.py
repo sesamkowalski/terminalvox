@@ -2,7 +2,7 @@
 
 The list is a text file, one word form per line, with the stressed vowel in capitals: "перезапущУ".
 Before synthesis each listed word gets a combining acute accent after that vowel ("перезапущу́"):
-Google Chirp 3 HD follows it, Azure ignores it.
+Google Chirp 3 HD follows it, Azure ignores it. Silero wants a "+" before the vowel instead ("перезапущ+у").
 """
 
 import re
@@ -25,14 +25,16 @@ def load(path: str | Path) -> dict[str, int]:
     return words
 
 
-def stress(text: str, words: dict[str, int]) -> str:
-    """The text with stress marks in the listed words, the case of the text kept."""
+def stress(text: str, words: dict[str, int], plus: bool = False) -> str:
+    """The text with stress marks in the listed words, the case of the text kept; plus=True for Silero."""
     if not words:
         return text
 
     def mark(m: re.Match) -> str:
         w = m.group(0)
         i = words.get(w.lower())
-        return w if i is None else w[: i + 1] + ACUTE + w[i + 1 :]
+        if i is None:
+            return w
+        return w[:i] + "+" + w[i:] if plus else w[: i + 1] + ACUTE + w[i + 1 :]
 
-    return re.sub(r"[А-Яа-яЁё]+(?!́)", mark, text)
+    return re.sub(r"(?<!\+)[А-Яа-яЁё]+(?![+́])", mark, text)

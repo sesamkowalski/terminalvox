@@ -4,7 +4,11 @@ UNIT    := $(HOME)/.config/systemd/user/$(SERVICE).service
 LOG_DIR ?= $(CURDIR)/logs
 SYSTEMCTL := systemctl --user
 
-.PHONY: help run install uninstall start stop restart status logs journal
+SILERO      := terminalvox-silero
+SILERO_UNIT := $(HOME)/.config/systemd/user/$(SILERO).service
+
+.PHONY: help run install uninstall start stop restart status logs journal \
+        silero-run silero-install silero-uninstall silero-restart silero-status silero-journal
 
 help:
 	@echo "make run        - run in the terminal (Ctrl+C to stop)"
@@ -13,6 +17,8 @@ help:
 	@echo "make logs       - tail $(LOG_DIR)/bot.log"
 	@echo "make journal    - systemd journal (run.sh output, startup errors)"
 	@echo "make uninstall  - stop and remove the service"
+	@echo "make silero-run | silero-install | silero-restart | silero-status | silero-journal | silero-uninstall"
+	@echo "                - the local Silero synthesis service (TTS_PROVIDER=silero), see silero/server.py"
 
 run:
 	./run.sh
@@ -47,4 +53,30 @@ journal:
 uninstall:
 	-$(SYSTEMCTL) disable --now $(SERVICE)
 	rm -f $(UNIT)
+	$(SYSTEMCTL) daemon-reload
+
+# Local synthesis (TTS_PROVIDER=silero): a service of its own, so the model stays loaded across bot restarts.
+$(SILERO_UNIT): silero/$(SILERO).service.in Makefile
+	mkdir -p $(@D)
+	sed -e 's#@DIR@#$(CURDIR)#g' $< > $@
+	$(SYSTEMCTL) daemon-reload
+
+silero-run:
+	silero/run.sh
+
+silero-install: $(SILERO_UNIT)
+	$(SYSTEMCTL) enable --now $(SILERO)
+
+silero-restart: $(SILERO_UNIT)
+	$(SYSTEMCTL) restart $(SILERO)
+
+silero-status:
+	-$(SYSTEMCTL) --no-pager status $(SILERO)
+
+silero-journal:
+	journalctl --user -u $(SILERO) -n 100 -f
+
+silero-uninstall:
+	-$(SYSTEMCTL) disable --now $(SILERO)
+	rm -f $(SILERO_UNIT)
 	$(SYSTEMCTL) daemon-reload

@@ -1,0 +1,18 @@
+[project]
+name = "terminalvox-silero"
+version = "0.1.0"
+description = "Local Russian speech synthesis (Silero) for TerminalVox, with Piper's HTTP protocol"
+requires-python = ">=3.12,<3.14"
+dependencies = ["torch>=2.5", "numpy", "omegaconf"]
+
+# CPU-only torch: the default wheel brings CUDA libraries, gigabytes for nothing.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[tool.uv]
+package = false

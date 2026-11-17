@@ -26,12 +26,12 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.datastructures import Headers
 
 from bridge import ClaudeSession, TmuxBridge, list_sessions
+from vad_meter import MeteredSileroVAD
 import stress
 from commands import parse_aliases
 from phrases import LANGS
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
@@ -76,10 +76,13 @@ if VOICE_LANG not in LANGS:
 PHRASES = LANGS[VOICE_LANG]
 VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID") or PHRASES.voice
 TTS_MODEL = os.getenv("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5")
-# Speech synthesis: ElevenLabs, or Google Cloud Chirp 3 HD (a service account key, much cheaper).
+# Speech synthesis: ElevenLabs, Google Cloud Chirp 3 HD (a service account key, much cheaper),
+# or local Silero (Russian only, free; the service in silero/, make silero-install).
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")
-if TTS_PROVIDER not in ("elevenlabs", "google"):
-    raise SystemExit(f"TTS_PROVIDER={TTS_PROVIDER!r}: supported elevenlabs, google")
+if TTS_PROVIDER not in ("elevenlabs", "google", "silero"):
+    raise SystemExit(f"TTS_PROVIDER={TTS_PROVIDER!r}: supported elevenlabs, google, silero")
+if TTS_PROVIDER == "silero" and VOICE_LANG != "ru":
+    raise SystemExit("TTS_PROVIDER=silero speaks Russian only: set VOICE_LANG=ru or another TTS_PROVIDER")
 # Speech recognition: ElevenLabs Scribe, or Google Cloud Speech-to-Text v2 (same key as for synthesis).
 STT_PROVIDER = os.getenv("STT_PROVIDER", "elevenlabs")
 if STT_PROVIDER not in ("elevenlabs", "google"):
@@ -89,9 +92,13 @@ GOOGLE_STT_LOCATION = os.getenv("GOOGLE_STT_LOCATION", "global")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS", "google-tts.json")
 STRESS_FILE = os.getenv("STRESS_FILE", "stress.txt")  # stress marks for Google synthesis, see stress.py
 GOOGLE_TTS_VOICE = os.getenv("GOOGLE_TTS_VOICE") or {"en": "en-US", "ru": "ru-RU"}[VOICE_LANG] + "-Chirp3-HD-Charon"
+SILERO_URL = os.getenv("SILERO_URL") or f"http://127.0.0.1:{os.getenv('SILERO_PORT', '7875')}/"
+SILERO_VOICE = os.getenv("SILERO_VOICE", "xenia")  # aidar, baya, kseniya, xenia, eugene
+LATIN_FILE = os.getenv("LATIN_FILE", "latin.txt")  # how to say Latin words with Silero, see ru_normalize.py
 # Default session when nothing is chosen in the UI. Empty: echo instead of Claude Code.
-# A tmux target, e.g. "=voice:0.0" or a pane id "%64".
-TMUX_TARGET = os.getenv("TMUX_TARGET", "")
+# A tmux target, e.g. "=voice:0.0" or a pane id "%64", or a herdr pane id like "w2:p1".
+# MUX_TARGET is the same; the old name TMUX_TARGET still works.
+TMUX_TARGET = os.getenv("MUX_TARGET") or os.getenv("TMUX_TARGET", "")
 VOICE_PREFIX = os.getenv("VOICE_PREFIX", "[voice] ")
 # Seconds of continuous speech (beyond the VAD trigger) needed to interrupt the bot.
 BARGE_IN_SECS = float(os.getenv("BARGE_IN_SECS", "0.5"))
@@ -442,7 +449,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     body = runner_args.body or {}  # request_data from /api/offer: the choice made in the UI
     target = body.get("pane") or TMUX_TARGET
     session = ClaudeSession(target) if target else None
-    logger.info(f"Mode: {'tmux ' + target if session else 'echo'}, language {VOICE_LANG}, STT {STT_PROVIDER}, TTS {TTS_PROVIDER}")
+    logger.info(f"Mode: {'session ' + target if session else 'echo'}, language {VOICE_LANG}, STT {STT_PROVIDER}, TTS {TTS_PROVIDER}")
     pace = body.get("pace") if body.get("pace") in PACES else "normal"
     hold_secs, max_pause_secs, merge_secs = PACES[pace]
     logger.info(f"Pace: {pace} (hold {hold_secs}s, max pause {max_pause_secs}s, merge {merge_secs}s)")
@@ -476,6 +483,11 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             settings=GoogleTTSService.Settings(voice=GOOGLE_TTS_VOICE, language=Language(PHRASES.language)),
             text_transforms=[("*", add_stress)],
         )
+    elif TTS_PROVIDER == "silero":
+        from silero_tts import SileroTTSService
+
+        # Rate and pitch: the service's defaults (SILERO_RATE, SILERO_PITCH), changeable per request.
+        tts = SileroTTSService(url=SILERO_URL, voice=SILERO_VOICE, latin_file=LATIN_FILE, stress_file=STRESS_FILE)
     else:
         tts = ElevenLabsTTSService(
             api_key=ELEVENLABS_API_KEY,
@@ -489,7 +501,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     user_aggregator, _ = LLMContextAggregatorPair(
         LLMContext(),
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
+            vad_analyzer=MeteredSileroVAD(params=VADParams(stop_secs=VAD_STOP_SECS)),
             user_turn_strategies=UserTurnStrategies(
                 start=[BargeInStartStrategy(BARGE_IN_SECS)],
                 stop=[

@@ -40,19 +40,24 @@ def unstretch(text: str) -> str:
     return re.sub(r"([^\W\d_])\1{2,}", r"\1", text)
 
 
+def strip_noise(name: str, p: Phrases) -> str:
+    """A spoken name without words like "session", "project": "сессию дэй" -> "дэй"."""
+    return " ".join(re.sub(p.name_noise, " ", name, flags=re.I).split())
+
+
 def parse(text: str, p: Phrases) -> tuple[str, str, bool] | None:
     """(kind, name, strong) if the phrase starts with a command, else None: ("switch", name, strong),
     ("back", "", True) or ("list", "", True). A weak switch ("go back to …") must not swallow a request
-    when no session matches."""
+    when no session matches. The name keeps words like "session": "voice session" may be the name
+    itself; find() tries it without them too."""
     t = unstretch(text.strip())
     if p.switch_back.match(t):
         return "back", "", True
     for pat, strong in ((p.switch, True), (p.switch_weak, False)):
         if m := pat.match(t):
-            name = re.sub(p.name_noise, " ", m.group("name"), flags=re.I)
-            name = " ".join(name.strip(" \t.,!?…\"'«»").split())
+            name = " ".join(m.group("name").strip(" \t.,!?…\"'«»").split())
             # A long "name" is a request ("go to the docs folder and fix the typo"), not a session.
-            if name and len(name.split()) <= 4:
+            if strip_noise(name, p) and len(strip_noise(name, p).split()) <= 4:
                 return "switch", name, strong
             return None
     if p.list_sessions.match(t):
@@ -91,9 +96,16 @@ def score(query: str, session: dict) -> float:
 
 
 def find(query: str, sessions: list[dict], aliases: dict[str, str] | None = None,
-         threshold: float = 0.65, margin: float = 0.1) -> list[dict]:
+         threshold: float = 0.65, margin: float = 0.1, p: Phrases | None = None) -> list[dict]:
     """Sessions matching a spoken name, best first: one means a clear winner, several mean ask again,
-    none means nothing similar. aliases maps spoken words to session names ("календарь" -> "scheduling-agent")."""
+    none means nothing similar. aliases maps spoken words to session names ("календарь" -> "scheduling-agent").
+    With p, the name is tried as said first ("voice session" is the session voicesession, not voice),
+    then without words like "session" ("сессию дэй" -> "дэй")."""
+    if p and (bare := strip_noise(query, p)) != query:
+        hits = find(query, sessions, aliases, threshold, margin)
+        if hits and max(score(query, s) for s in hits) >= 0.95:
+            return hits
+        return find(bare, sessions, aliases, threshold, margin)
     alias = (aliases or {}).get(sound(query))
     if alias:
         hits = [s for s in sessions if s.get("name") == alias]

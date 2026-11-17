@@ -18,13 +18,13 @@ class Parse(unittest.TestCase):
     def test_switch_ru(self):
         self.assertEqual(parse("Переключись на Арамко.", RU), ("switch", "Арамко", True))
         self.assertEqual(parse("Ну, переключи на дэй", RU), ("switch", "дэй", True))
-        self.assertEqual(parse("Переключись на сессию шедулинг!", RU), ("switch", "шедулинг", True))
+        self.assertEqual(parse("Переключись на сессию шедулинг!", RU), ("switch", "сессию шедулинг", True))
         self.assertEqual(parse("Перейди в календарь.", RU), ("switch", "календарь", False))
         self.assertEqual(parse("Вернись к voicesession", RU), ("switch", "voicesession", False))
 
     def test_switch_en(self):
         self.assertEqual(parse("Switch to aramco.", EN), ("switch", "aramco", True))
-        self.assertEqual(parse("OK, switch back to the day session", EN), ("switch", "day", True))
+        self.assertEqual(parse("OK, switch back to the day session", EN), ("switch", "the day session", True))
         self.assertEqual(parse("Go back to scheduling.", EN), ("switch", "scheduling", False))
 
     def test_list(self):
@@ -51,7 +51,7 @@ class Parse(unittest.TestCase):
             self.assertEqual(parse(phrase, RU), ("switch", "Арамко", True), phrase)
         self.assertEqual(parse("Итак, вернись обратнооо.", RU), ("back", "", True))
         self.assertEqual(parse("Э-э, какие есть сессии?", RU), ("list", "", True))
-        self.assertEqual(parse("Ну, переключись на сессию дэй", RU), ("switch", "дэй", True))
+        self.assertEqual(parse("Ну, переключись на сессию дэй", RU), ("switch", "сессию дэй", True))
         self.assertEqual(parse("Um, switch to aramco", EN), ("switch", "aramco", True))
         self.assertEqual(parse("Well, list sessions.", EN), ("list", "", True))
         self.assertIsNone(parse("Итак, давай починим тесты.", RU))
@@ -84,6 +84,17 @@ class Find(unittest.TestCase):
         self.assertEqual(self.names("voice"), ["voicesession"])
         self.assertEqual(self.names("aramco pbit"), ["aramco-pbit-cell"])
 
+    def test_noise_word_in_the_name(self):
+        # "session" is part of "voicesession", not a filler, when there is also a session "voice".
+        both = SESSIONS + [s("voice")]
+        find_ = lambda q, p: [x["name"] for x in find(q, both, p=p)]
+        self.assertEqual(find_("Voice Session", EN), ["voicesession"])
+        self.assertEqual(find_("Voice Session", RU), ["voicesession"])
+        self.assertEqual(find_("voice", RU), ["voice"])
+        self.assertEqual(find_("сессию дэй", RU), ["day"])
+        self.assertEqual(find_("the day session", EN), ["day"])
+        self.assertEqual(parse("Дааа, переключи на Voice Session.", RU), ("switch", "Voice Session", True))
+
     def test_ambiguous(self):
         self.assertEqual(sorted(self.names("data")), ["data-pipeline", "data-platform"])
         self.assertEqual(self.names("дата пайплайн"), ["data-pipeline"])
@@ -102,6 +113,54 @@ class Find(unittest.TestCase):
         self.assertEqual(sound("Арамко"), sound("aramco"))
         self.assertEqual(sound("шедулинг"), sound("scheduling"))
         self.assertEqual(sound("дэй"), sound("day"))
+
+
+class Complete(unittest.TestCase):
+    def test_unfinished_endings(self):
+        from bridge import looks_complete
+        for t in ["Давай обсудим.", "Посмотри файл, что?", "Мама.", "Сделай так, а потом.", "Fix the bug."]:
+            self.assertTrue(looks_complete(t), t)
+        for t in ["Давай обсудим...", "Давай обсудим, и.", "Давай обсудим, э-э-э.", "Давай, ээээ.",
+                  "Это важно, потому что.", "Ok, and um."]:
+            self.assertFalse(looks_complete(t), t)
+
+
+class ToolPhrase(unittest.TestCase):
+    def say(self, cmd):
+        from bridge import tool_phrase
+        return tool_phrase({"name": "Bash", "input": {"command": cmd}}, RU)
+
+    def test_program_not_path(self):
+        self.assertEqual(self.say("grep -rn foo ~/vault/docker-notes/x.md"), "Ищу в файлах.")
+        self.assertEqual(self.say("cd ~/git/voicesession && ls -la"), "Смотрю файлы.")
+        self.assertEqual(self.say("cd ~/git/voicesession && git log --oneline -3"), "Смотрю гит.")
+        self.assertEqual(self.say("docker ps"), "Работаю с докером.")
+        self.assertEqual(self.say("sudo docker compose up -d"), "Работаю с докером.")
+        self.assertEqual(self.say("PYTHONPATH=. .venv/bin/python -m unittest"), "Запускаю скрипт.")
+        self.assertEqual(self.say("timeout 120 uv run pytest -q"), "Запускаю тесты.")
+        self.assertEqual(self.say("cat a.txt | grep x"), "Ищу в файлах.")
+        self.assertEqual(self.say("mkdir -p ~/git/x"), "Запускаю команду.")
+
+
+class Filler(unittest.TestCase):
+    def kind(self, text, p=RU):
+        from bridge import filler_choices
+        return (filler_choices(text, p) or ["(silent)"])[0]
+
+    def test_by_kind(self):  # real phrases from the log
+        self.assertEqual(self.kind("М-м-м, да вроде ничего."), "(silent)")
+        self.assertEqual(self.kind("Да, закрываем."), "(silent)")
+        self.assertEqual(self.kind("Приём."), "(silent)")
+        self.assertEqual(self.kind("А-а-а, стой, стой, стой!"), "Понял.")
+        self.assertEqual(self.kind("Не надо ничего записывать."), "Понял.")
+        self.assertEqual(self.kind("А-а-а, м-м-м, ну-с, покажи, какие вопросы остались."), "Сейчас посмотрю.")
+        self.assertEqual(self.kind("Виза есть. Э-э-э, запиши, э-э-э, этот рейс."), "Понял, делаю.")
+        self.assertEqual(self.kind("Э-э-э, причём мы там договорились?"), "Сейчас подумаю.")
+        self.assertEqual(self.kind("Скажи, а где-то сохраняются логи наших разговоров"), "Сейчас подумаю.")
+        self.assertEqual(self.kind("Это отдельное испытание."), "Угу.")
+        self.assertEqual(self.kind("Yeah, sounds good.", EN), "(silent)")
+        self.assertEqual(self.kind("Can you check the logs?", EN), "Let me look.")
+        self.assertEqual(self.kind("Why is it slow?", EN), "Let me think.")
 
 
 class Pick(unittest.TestCase):
@@ -183,6 +242,19 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.said, ["Сессия gone закрыта."])
         self.assertEqual(self.switched, [])
 
+class Checkin(unittest.TestCase):
+    def test_first_word_lost(self):
+        from bridge import is_checkin
+        from phrases import EN, RU
+        for t in ["Ты здесь?", "Здесь?", "А-а-а, здесь?", "Тут?", "Жив?"]:
+            self.assertTrue(is_checkin(t, RU), t)
+        for t in ["Здесь проблема.", "Здесь файл лежит."]:
+            self.assertFalse(is_checkin(t, RU), t)
+        self.assertTrue(is_checkin("There?", EN))
+        self.assertFalse(is_checkin("There is a bug.", EN))
+
+
 
 if __name__ == "__main__":
     unittest.main()
+

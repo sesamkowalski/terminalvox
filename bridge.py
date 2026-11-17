@@ -1,6 +1,6 @@
-"""Bridge between the voice pipeline and a Claude Code session in tmux.
+"""Bridge between the voice pipeline and a Claude Code session in tmux or herdr (mux.py).
 
-In: the final text of a user phrase -> `tmux send-keys -l` into the pane running claude.
+In: the final text of a user phrase -> typed into the pane running claude (`tmux send-keys -l`).
 Out: new assistant text blocks from the session's JSONL transcript -> TTS.
 The transcript format and the quirks found along the way are described in NOTES.md.
 """
@@ -18,7 +18,8 @@ from pathlib import Path
 import numpy as np
 from loguru import logger
 
-from commands import find, parse, pick
+import mux
+from commands import find, parse, pick, strip_noise, unstretch
 from phrases import EN, Phrases
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
@@ -54,10 +55,18 @@ def is_checkin(text: str, p: Phrases) -> bool:
 # ElevenLabs Scribe marks cut-off speech: "…through", "n-n-no-", "Hmm...". A finished phrase ends
 # with a period, "?" or "!", but not with an ellipsis.
 COMPLETE_RE = re.compile(r"(?<!\.)[.?!]['\"»)]*$")
+# Nor with a hesitation or a conjunction, even before a period: "…и, э-э-э.", "…потому что.", "…and um."
+UNFINISHED_END_RE = re.compile(
+    r"(?:^|[\s,—–-])(?:(?:э+|а+|м+|у+|uh+|um+|er+m*|h?m+)(?:-(?:э+|а+|м+))*"
+    r"|и|а|но|или|что|чтобы|потому|если|когда|который|которая|которые|то\s+есть|в\s+смысле"
+    r"|and|but|or|so|because|that|which|if|when)[\s.!]*['\"»)]*$",
+    re.I,
+)
 
 
 def looks_complete(text: str) -> bool:
-    return bool(COMPLETE_RE.search(text.strip()))
+    t = unstretch(text.strip())
+    return bool(COMPLETE_RE.search(t)) and not UNFINISHED_END_RE.search(t)
 
 
 def status_phrase(p: Phrases, started_at: float, activity: str, now: float | None = None) -> str:
@@ -72,68 +81,94 @@ def status_phrase(p: Phrases, started_at: float, activity: str, now: float | Non
     return "".join(parts)
 
 
+_PREFIX_WORDS = {"sudo", "env", "timeout", "nice", "time", "exec", "command", "xargs", "then", "do", "else"}
+
+
+def programs(cmd: str) -> list[str]:
+    """Each simple command of a shell line from its program on: "cd ~/git/x && PYTHONPATH=. .venv/bin/python
+    -m t" -> ["cd ~/git/x", "python -m t"]. Arguments are kept, but patterns match at the start only,
+    so a path like ~/git or …/docker/… doesn't count as running git or docker."""
+    out = []
+    for seg in re.split(r"&&|\|\||[;|&\n(){}`]|\$\(", cmd):
+        words = seg.split()
+        while words and (words[0] in _PREFIX_WORDS or re.fullmatch(r"\w+=\S*|-\S*|\d+[smh]?", words[0])):
+            words.pop(0)
+        if words:
+            out.append(" ".join([words[0].rpartition("/")[2], *words[1:]]))
+    return out
+
+
+_UMS = re.compile(r"^(?:(?:э+|а+|м+|у+|u+m+|u+h+|e+r+m*|h?m+)(?:-(?:э+|а+|м+))*(?![\w])[,.…\s]*)+", re.I)
+
+
+def filler_choices(text: str, p: Phrases) -> list[str]:
+    """Fillers that fit the phrase: "посмотри…" -> "Сейчас посмотрю", a question -> "Сейчас подумаю",
+    "да, закрываем" -> [] (stay silent). Leading "um"s and «ну», «давай» don't count."""
+    t = _UMS.sub("", unstretch(text.strip()).lower())
+    for pat, choices in p.filler_kinds:
+        if pat.search(t):
+            return choices
+    return p.fillers
+
+
 def tool_phrase(block: dict, p: Phrases) -> str | None:
     name = block.get("name", "")
     if name == "Bash":
-        cmd = (block.get("input") or {}).get("command", "")
-        return next((ph for pat, ph in p.bash if re.search(pat, cmd)), p.bash_default)
+        progs = programs((block.get("input") or {}).get("command", ""))
+        return next((ph for pat, ph in p.bash if any(re.match(pat, x) for x in progs)), p.bash_default)
     if name.startswith("mcp__"):
         return p.mcp
     return p.tools.get(name)  # internal tools (TaskUpdate, ToolSearch…) are not announced
 
 
-def _run(*args: str) -> str:
-    return subprocess.run(args, capture_output=True, text=True, check=True).stdout.strip()
-
-
 def list_sessions() -> list[dict]:
-    """Live Claude Code sessions in tmux, most recently active first."""
-    panes = {}
-    for line in _run("tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{session_name}:#{window_index} #{window_name}").splitlines():
-        pane, where = line.split("\t", 1)
-        panes[pane] = where
-    out = []
+    """Live Claude Code sessions in tmux and herdr, most recently active first."""
+    live = {}
     for f in (CLAUDE_DIR / "sessions").glob("*.json"):
         try:
             d = json.loads(f.read_text())
             os.kill(d["pid"], 0)
         except (ValueError, KeyError, OSError):
             continue
-        pane = (d.get("tmux") or "").rpartition(".")[2]
-        if pane not in panes:
-            continue  # not in tmux (background or a plain terminal): send-keys can't reach it
-        out.append({
-            "name": d.get("name") or pane,
-            "pane": pane,
-            "where": panes[pane],
-            "cwd": d["cwd"].replace(str(Path.home()), "~"),
-            "status": d.get("status", ""),
-            "waitingFor": d.get("waitingFor", ""),
-            "updatedAt": d.get("updatedAt", 0),
-        })
+        live[d["pid"]] = d
+    out = []
+    for m in mux.ALL:
+        if not m.available():
+            continue
+        try:
+            found = m.claude_panes(live)
+        except (subprocess.CalledProcessError, ValueError, KeyError) as e:
+            # No server running (tmux without sessions, herdr not started): nothing there.
+            logger.debug(f"{type(m).__name__}: {e}")
+            continue
+        # Sessions outside a multiplexer (background, a plain terminal) are not listed: nothing can type there.
+        for pane, where, d in found:
+            out.append({
+                "name": d.get("name") or pane,
+                "pane": pane,
+                "where": where,
+                "cwd": d["cwd"].replace(str(Path.home()), "~"),
+                "status": d.get("status", ""),
+                "waitingFor": d.get("waitingFor", ""),
+                "updatedAt": d.get("updatedAt", 0),
+            })
     return sorted(out, key=lambda x: -x["updatedAt"])
 
 
 class ClaudeSession:
-    """A tmux pane running claude, and its transcript."""
+    """A tmux or herdr pane running claude, and its transcript."""
 
     def __init__(self, target: str):
-        # Pin the pane by id (%NN): tmux may match a name like "voice" by prefix against
-        # another window, and an id won't move to a different pane if the session dies.
-        self.target = _run("tmux", "display", "-p", "-t", target, "#{pane_id}")
-        if not self.target.startswith("%"):
-            raise RuntimeError(f"tmux pane {target!r} not found")
-        where = _run("tmux", "display", "-p", "-t", self.target, "#{session_name}:#{window_index}.#{pane_index}")
+        self._mux = mux.of(target)
+        self.target = self._mux.resolve(target)
+        where = self._mux.where(self.target)
         info = self.info()
         self.name = info.get("name") or where
         logger.info(f"Claude session: {target} -> {self.name}, {where} ({self.target}), {info['cwd']}")
 
     def info(self) -> dict:
         # ~/.claude/sessions/<pid>.json: sessionId, cwd, status (busy|idle|waiting).
-        # claude is either the pane process itself or its child (when the pane runs a shell).
-        pane_pid = _run("tmux", "display", "-p", "-t", self.target, "#{pane_pid}")
-        children = subprocess.run(["pgrep", "-P", pane_pid], capture_output=True, text=True).stdout
-        for pid in [pane_pid, *children.split()]:
+        for pid in self._mux.pids(self.target):
             f = CLAUDE_DIR / "sessions" / f"{pid}.json"
             if f.exists():
                 return json.loads(f.read_text())
@@ -149,7 +184,7 @@ class ClaudeSession:
 
     def input_box(self) -> list[str]:
         """Lines of claude's input box: from the last line starting with "❯" to the border below it."""
-        lines = _run("tmux", "capture-pane", "-p", "-t", self.target).splitlines()
+        lines = self._mux.screen(self.target).splitlines()
         start = max((i for i, l in enumerate(lines) if l.lstrip().startswith("❯")), default=None)
         box = []
         for line in lines[start:] if start is not None else []:
@@ -170,7 +205,7 @@ class ClaudeSession:
         """
         if not self.busy():
             return False
-        _run("tmux", "send-keys", "-t", self.target, "Escape")
+        self._mux.keys(self.target, "esc")
         for _ in range(40):
             await asyncio.sleep(0.05)
             if not self.busy():
@@ -189,11 +224,11 @@ class ClaudeSession:
         text = " ".join(text.split())
         # After Escape claude puts the interrupted request back into the input box: clear it.
         # C-u erases one screen line, and a long request wraps over several.
-        _run("tmux", "send-keys", "-t", self.target, *["C-u"] * max(1, len(self.input_box())))
+        self._mux.keys(self.target, *["ctrl+u"] * max(1, len(self.input_box())))
         for path in images:
             await self._paste_image(path)
-        _run("tmux", "send-keys", "-t", self.target, "-l", text)
-        _run("tmux", "send-keys", "-t", self.target, "Enter")
+        self._mux.text(self.target, text)
+        self._mux.keys(self.target, "enter")
         # An Enter that arrives while claude is still processing the input is lost: the text stays in the box.
         tail = _tail_words(text)
         for _ in range(20 if tail else 0):
@@ -203,7 +238,7 @@ class ClaudeSession:
         if not tail:
             return True
         logger.warning("The message is still in the input box, pressing Enter again")
-        _run("tmux", "send-keys", "-t", self.target, "Enter")
+        self._mux.keys(self.target, "enter")
         return True
 
     async def _paste_image(self, path: str):
@@ -212,11 +247,10 @@ class ClaudeSession:
         It does this with a delay: text typed earlier would land before the mark and the Enter
         would be lost. So wait until the mark shows up on screen."""
         def marks() -> int:
-            return _run("tmux", "capture-pane", "-p", "-t", self.target).count("[Image #")
+            return self._mux.screen(self.target).count("[Image #")
 
         before = marks()
-        subprocess.run(["tmux", "load-buffer", "-b", "terminalvox-image", "-"], input=path, text=True, check=True)
-        _run("tmux", "paste-buffer", "-p", "-d", "-b", "terminalvox-image", "-t", self.target)
+        self._mux.paste(self.target, path)
         for _ in range(60):
             await asyncio.sleep(0.05)
             if marks() > before:
@@ -434,7 +468,7 @@ class TmuxBridge(FrameProcessor):
 
     @property
     def pane(self) -> str | None:
-        """The tmux pane of the current session, None in echo mode."""
+        """The pane (tmux or herdr) of the current session, None in echo mode."""
         return self._session.target if self._session else None
 
     async def _announce_session(self):
@@ -465,7 +499,7 @@ class TmuxBridge(FrameProcessor):
             logger.info(f"Command: go back -> {prev}")
             if not prev:
                 await self._say(self._p.no_previous)
-            elif not (live := [x for x in sessions if x["pane"] == prev["pane"]]):
+            elif not (live := [x for x in sessions if x["pane"] == mux.current(prev["pane"])]):
                 await self._say(self._p.previous_closed.format(name=prev["name"]))
             else:
                 await self._switch_to(live[0])
@@ -475,8 +509,9 @@ class TmuxBridge(FrameProcessor):
             logger.info(f"Command: list sessions -> {names}")
             await self._say(self._p.sessions.format(names=", ".join(names)) if names else self._p.no_sessions)
             return True
-        hits = find(name, sessions, self._aliases)
+        hits = find(name, sessions, self._aliases, p=self._p)
         logger.info(f"Command: switch to {name!r} -> {[x['name'] for x in hits]}")
+        name = strip_noise(name, self._p) or name
         if not hits:
             if not strong:
                 return False  # "go back to the docs folder…": a request for claude, not a command
@@ -490,7 +525,7 @@ class TmuxBridge(FrameProcessor):
         return True
 
     async def _switch_to(self, info: dict):
-        if self._session and self._session.target == info["pane"]:
+        if self._session and mux.current(self._session.target) == info["pane"]:
             await self._say(self._p.switch_already.format(name=self._session.name))
             return
         try:
@@ -675,6 +710,7 @@ class TmuxBridge(FrameProcessor):
         # part yet: interrupt and send the whole phrase.
         # But if claude was busy with its own work at that moment, the phrase sits in its queue:
         # Escape would pull it back into the input box and everything would hang unsent.
+        merged = False
         if (
             self._last_sent
             and not self._sent_queued
@@ -684,6 +720,7 @@ class TmuxBridge(FrameProcessor):
             await self._session.interrupt(restored=self._last_sent)
             text = f"{self._last_sent} {text}"
             images = self._last_images + images
+            merged = True
             logger.info(f"Merged with the previous phrase: {text}")
         # The user cut into the bot's speech: stop generation too. Otherwise (the bot is silent
         # but the session is still working) claude queues the message itself.
@@ -698,7 +735,7 @@ class TmuxBridge(FrameProcessor):
             await self._say(self._p.dialog_open)
             return
         self._timings.mark("tmux_sent")
-        if self._beep:
+        if self._beep and not merged:  # a continuation: the user has already heard the beep once
             await self.push_frame(OutputAudioRawFrame(self._beep_audio, self._sample_rate, 1))
         self._muted = False
         if self._filler_secs > 0:
@@ -711,7 +748,11 @@ class TmuxBridge(FrameProcessor):
         # Stay quiet if claude has already answered, a new phrase came in, or we were interrupted.
         if self._spoken_at >= sent_at or self._last_sent_at != sent_at or self._muted:
             return
-        phrase = random.choice([f for f in self._p.fillers if f != self._last_filler])
+        choices = filler_choices(self._last_sent, self._p)
+        if not choices:
+            logger.info("Filler: none for a reaction")
+            return
+        phrase = random.choice([f for f in choices if f != self._last_filler] or choices)
         self._last_filler = phrase
         logger.info(f"Filler: {phrase}")
         await self._say(phrase)
