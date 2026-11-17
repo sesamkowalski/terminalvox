@@ -41,6 +41,8 @@ class Phrases:
     voice_on: str
     voice_off: str
     image_only: str  # message text for a photo sent without words
+    file_only: str  # message text for a file sent without words
+    file_note: str  # {paths}: appended to the message a file goes with
     connecting: str  # {name}
     listening: str
     switching: str  # {name}
@@ -48,6 +50,8 @@ class Phrases:
     goodbye: str
     photo_received: str
     photo_no_session: str
+    file_received: str
+    file_no_session: str
     rest_in_terminal: str
     link: str  # replaces URLs in speech
     # Status: "<working><for N minutes | just started>. <now><activity>"
@@ -150,6 +154,8 @@ EN = Phrases(
     ),
     voice_off="[voice-off] Voice mode is off, reply as usual from now on. No need to reply to this message.",
     image_only="Look at the photo.",
+    file_only="Look at the file.",
+    file_note="(File from the phone: {paths}. If you can't read this format, say so.)",
     connecting="Connecting to {name}.",
     listening="Listening.",
     switching="Switching to {name}.",
@@ -157,6 +163,8 @@ EN = Phrases(
     goodbye="Talk to you later.",
     photo_received="Got the photo.",
     photo_no_session="Got the photo, but there's no session.",
+    file_received="Got the file.",
+    file_no_session="Got the file, but there's no session.",
     rest_in_terminal="The rest is in the terminal.",
     link="link",
     working="I'm here, working",
@@ -266,6 +274,8 @@ RU = Phrases(
     ),
     voice_off="[voice-off] Голосовой режим выключен, дальше отвечай как обычно. Отвечать на это сообщение не нужно.",
     image_only="Посмотри на фото.",
+    file_only="Посмотри файл.",
+    file_note="(Файл с телефона: {paths}. Если такой формат не читается, так и скажи.)",
     connecting="Подключаюсь к {name}.",
     listening="Слушаю.",
     switching="Переключаюсь на {name}.",
@@ -273,6 +283,8 @@ RU = Phrases(
     goodbye="До связи.",
     photo_received="Фото получил.",
     photo_no_session="Фото получил, но сессии нет.",
+    file_received="Файл получил.",
+    file_no_session="Файл получил, но сессии нет.",
     rest_in_terminal="Остальное в терминале.",
     link="ссылка",
     working="Я тут, работаю",

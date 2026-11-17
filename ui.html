@@ -88,8 +88,8 @@
   </label>
 
   <button id="connect">Connect</button>
-  <button id="photo" class="stop" style="margin-top: 10px" hidden>Send photo</button>
-  <input id="photofile" type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden>
+  <button id="photo" class="stop" style="margin-top: 10px" hidden>Send photo or file</button>
+  <input id="photofile" type="file" hidden>
   <div id="status"></div>
   <audio id="audio" autoplay playsinline></audio>
 
@@ -274,7 +274,8 @@ function disconnect(msg = "") {
 
 $("connect").onclick = () => (pc ? disconnect() : connect());
 
-// A photo into the call: without a caption the server attaches it to the next phrase.
+// A photo or any file into the call: without a caption the server attaches it to the next phrase.
+// Images go to claude as attachments, other files as paths it opens itself.
 $("photo").onclick = () => $("photofile").click();
 $("photofile").onchange = async () => {
   const f = $("photofile").files[0];
@@ -282,8 +283,8 @@ $("photofile").onchange = async () => {
   if (!f) return;
   const form = new FormData();
   form.append("file", f);
-  const r = await fetch("/api/image", { method: "POST", body: form }).catch(() => null);
-  if (!r || !r.ok) setStatus(`Photo not sent: ${r ? (await r.json().catch(() => ({}))).detail || r.status : "network"}`, "err");
+  const r = await fetch("/api/file", { method: "POST", body: form }).catch(() => null);
+  if (!r || !r.ok) setStatus(`Not sent: ${r ? (await r.json().catch(() => ({}))).detail || r.status : "network"}`, "err");
 };
 load();
 setInterval(() => { if (!$("list").classList.contains("open")) load(); }, 15000);

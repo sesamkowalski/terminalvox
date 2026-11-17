@@ -7,6 +7,7 @@ Connects to the bot over WebRTC like a browser, "speaks" pre-synthesized phrases
     uv run tests/selftest.py bargein
     uv run tests/selftest.py backchannel
     uv run tests/selftest.py photo %42 picture.png "What's in the photo?"   # into a test pane only
+    uv run tests/selftest.py file %42 report.pdf "What is this document about?"   # caption as text, no TTS
     uv run tests/selftest.py noise %42      # interrupted by noise: the reply is repeated (test pane)
 
 Measured on the client side, i.e. including network and buffers:
@@ -225,6 +226,25 @@ async def photo(pane: str, image: str, text=SAY["photo"]):
     await pc.close()
 
 
+async def file(pane: str, path: str, caption: str):
+    """POST /api/file with a caption (typed, so no speech is synthesized): the bot must answer aloud."""
+    pc, mic, speaker = await connect({"pane": pane, "inject": True})
+    await asyncio.sleep(4)  # "Connecting to …" and claude's greeting
+    await speaker.wait_silence(time.monotonic(), silence=1.5, timeout=30)
+    async with aiohttp.ClientSession() as s:
+        form = aiohttp.FormData()
+        form.add_field("file", Path(path).read_bytes(), filename=Path(path).name)
+        form.add_field("text", caption)
+        r = await s.post(f"{URL}/api/file", data=form)
+        print(f"RESULT upload: {r.status} {await r.text()}")
+    t0 = time.monotonic()
+    t = await speaker.wait_speech(t0, timeout=90)
+    print("RESULT file: the bot did not answer" if t is None else f"RESULT file: reply after {t - t0:.2f}s")
+    if t:
+        await speaker.wait_silence(t, silence=2.5, timeout=90)
+    await pc.close()
+
+
 async def noise(pane: str, question=SAY["long"], after=1.5):
     """Interrupt the bot with speech-like sound without words (a phrase played backwards): the reply must be repeated."""
     pc, mic, speaker = await connect({"pane": pane, "inject": False})
@@ -267,8 +287,8 @@ async def backchannel(question=SAY["long"], ack=SAY["ack"], after=2.0):
 
 if __name__ == "__main__":
     cmd, *rest = sys.argv[1:] or ["latency"]
-    if cmd in ("photo", "noise"):
-        asyncio.run({"photo": photo, "noise": noise}[cmd](*rest))
+    if cmd in ("photo", "noise", "file"):
+        asyncio.run({"photo": photo, "noise": noise, "file": file}[cmd](*rest))
         sys.exit()
     fn = {"latency": latency, "bargein": bargein, "backchannel": backchannel}[cmd]
     asyncio.run(fn(" ".join(rest)) if rest else fn())

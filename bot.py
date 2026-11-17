@@ -10,7 +10,9 @@ import os
 # pipecat.runner.run loads .env with override=True on import: keep the real environment to restore it.
 _ENV = dict(os.environ)
 
+import re
 import secrets
+import shutil
 import signal
 import subprocess
 import time
@@ -139,6 +141,9 @@ IMAGE_KEEP_DAYS = 7
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
 # Type by file signature: claude accepts only these formats.
 IMAGE_MAGIC = {b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png", b"GIF8": ".gif", b"RIFF": ".webp"}
+# Other files (PDF, Markdown, PPTX…): kept under their own name, claude gets the path in the message.
+FILES_DIR = Path(os.getenv("FILES_DIR") or Path.home() / ".cache" / "terminalvox" / "files")
+MAX_FILE_BYTES = 50 * 1024 * 1024
 
 # Directory for a rotating log file (the systemd service sets it). Empty: stderr only.
 LOG_DIR = os.getenv("LOG_DIR", "")
@@ -432,17 +437,52 @@ async def image(file: UploadFile, text: str = Form("")):
     data = await file.read(MAX_IMAGE_BYTES + 1)
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "photo larger than 15 MB")
-    ext = next((e for m, e in IMAGE_MAGIC.items() if data.startswith(m)), None)
-    if ext is None or (ext == ".webp" and data[8:12] != b"WEBP"):
+    if (ext := _image_ext(data)) is None:
         raise HTTPException(415, "JPEG, PNG, GIF or WebP required")
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    for old in IMAGES_DIR.iterdir():
+    return await _store_image(bridge, data, ext, text)
+
+
+def _image_ext(data: bytes) -> str | None:
+    ext = next((e for m, e in IMAGE_MAGIC.items() if data.startswith(m)), None)
+    return None if ext == ".webp" and data[8:12] != b"WEBP" else ext
+
+
+def _drop_old(directory: Path):
+    for old in directory.iterdir():
         if time.time() - old.stat().st_mtime > IMAGE_KEEP_DAYS * 86400:
-            old.unlink(missing_ok=True)
+            shutil.rmtree(old) if old.is_dir() else old.unlink(missing_ok=True)
+
+
+async def _store_image(bridge, data: bytes, ext: str, text: str) -> dict:
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    _drop_old(IMAGES_DIR)
     path = IMAGES_DIR / f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(3)}{ext}"
     path.write_bytes(data)
     await bridge.add_image(str(path), text.strip())
     return {"name": path.name}
+
+
+@app.post("/api/file")
+async def file_(file: UploadFile, text: str = Form("")):
+    """Any file into the current call. An image goes as a photo (an attachment claude sees); anything
+    else is kept under its own name in a folder of its own, and claude gets the path: it opens what
+    it can and says what it can't."""
+    bridge = ACTIVE["bridge"]
+    if bridge is None:
+        raise HTTPException(409, "no active call")
+    data = await file.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(413, "file larger than 50 MB")
+    if (ext := _image_ext(data)) and len(data) <= MAX_IMAGE_BYTES:
+        return await _store_image(bridge, data, ext, text)
+    name = re.sub(r"[^\w.() -]+", "_", Path(file.filename or "").name).strip(" .")[:100] or "file"
+    FILES_DIR.mkdir(parents=True, exist_ok=True)
+    _drop_old(FILES_DIR)
+    path = FILES_DIR / f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(3)}" / name
+    path.parent.mkdir()
+    path.write_bytes(data)
+    await bridge.add_file(str(path), text.strip())
+    return {"name": name}
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):

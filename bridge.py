@@ -410,6 +410,8 @@ class TmuxBridge(FrameProcessor):
         # A photo waits for the next phrase and goes with it; if none comes, it goes alone.
         self._images: list[str] = []
         self._last_images: list[str] = []  # attached to the last phrase (for merging)
+        # Other files go as paths in the message text: claude opens them with its tools.
+        self._files: list[str] = []
         self._image_wait_secs = image_wait_secs
         self._image_task = None
         # False interruption (noise, not a single word): the cut-off reply is repeated.
@@ -452,7 +454,7 @@ class TmuxBridge(FrameProcessor):
                 await self.cancel_task(task)
         self._filler_task = self._hold_task = self._image_task = None
         self._pending, self._pending_interrupted = "", False
-        self._images, self._last_images = [], []
+        self._images, self._last_images, self._files = [], [], []
         self._unsaid, self._cut, self._replay_task = [], [], None
         if old and old.target != session.target:
             self._previous = {"pane": old.target, "name": old.name}
@@ -647,13 +649,32 @@ class TmuxBridge(FrameProcessor):
         await self._say(self._p.photo_received)
         self._image_task = self.create_task(self._image_alone())
 
+    async def add_file(self, path: str, text: str = ""):
+        """A document from the client (POST /api/file): like a photo, but claude gets its path in the
+        message and opens it with its own tools, or says it can't."""
+        logger.info(f"File: {path}" + (f", caption: {text}" if text else ""))
+        if self._session is None:
+            await self._say(self._p.file_no_session)
+            return
+        self._files.append(path)
+        if self._image_task:
+            await self.cancel_task(self._image_task)
+            self._image_task = None
+        if text:
+            self._pending = f"{self._pending} {text}".strip()
+            await self._cancel_hold()
+            self.create_task(self._flush())
+            return
+        await self._say(self._p.file_received)
+        self._image_task = self.create_task(self._image_alone())
+
     async def _image_alone(self):
         await asyncio.sleep(self._image_wait_secs)
         self._image_task = None
-        # The user is finishing a phrase: the photo will go with it.
-        if self._images and not self._pending and not self._hold_task:
-            logger.info("Nothing said about the photo, sending it alone")
-            self._pending = self._p.image_only
+        # The user is finishing a phrase: the photo or file will go with it.
+        if (self._images or self._files) and not self._pending and not self._hold_task:
+            logger.info("Nothing said about the attachment, sending it alone")
+            self._pending = self._p.file_only if self._files else self._p.image_only
             await self._flush()
 
     async def _replay_if_noise(self, wait: float = 1.0):
@@ -703,6 +724,9 @@ class TmuxBridge(FrameProcessor):
             await self._say(self._echo(text))
             return
         images, self._images = self._images, []
+        files, self._files = self._files, []
+        if files:
+            text = f"{text} {self._p.file_note.format(paths=', '.join(files))}"
         if self._image_task:
             await self.cancel_task(self._image_task)
             self._image_task = None
@@ -728,10 +752,10 @@ class TmuxBridge(FrameProcessor):
             logger.info("Session interrupted (Escape)")
         self._sent_queued = self._session.busy()
         self._last_sent, self._last_sent_at, self._last_images = text, time.time(), images
-        if images:
-            logger.info(f"With photos: {len(images)}")
+        if images or files:
+            logger.info(f"With photos: {len(images)}, files: {len(files)}")
         if not await self._session.send(self._prefix + text, images):
-            self._images = images + self._images
+            self._images, self._files = images + self._images, files + self._files
             await self._say(self._p.dialog_open)
             return
         self._timings.mark("tmux_sent")

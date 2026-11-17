@@ -159,7 +159,7 @@ Who gets in:
 Denied requests are logged with `Denied`. Anyone with a shell on the machine can reach the local port,
 so on a shared machine keep that in mind.
 
-Photos sent during a call are stored in `~/.cache/terminalvox/images` for 7 days.
+Photos and files sent during a call are stored in `~/.cache/terminalvox/images` and `.../files` for 7 days.
 
 ## The page
 
@@ -173,7 +173,7 @@ Photos sent during a call are stored in `~/.cache/terminalvox/images` for 7 days
     and claude answers with a short greeting;
   - when you switch away, the old session gets "[voice-off] Voice mode is off".
 - **Speech pace**: how long the bot waits for the rest of a phrase after you pause.
-- **Send photo**: a photo goes into the conversation together with your next phrase.
+- **Send photo or file**: it goes into the conversation together with your next phrase.
 - The page remembers the last session and settings.
 - Pipecat's built-in client is still available at `/client/`; it connects to the default session
   (`TMUX_TARGET`) without a choice.
@@ -212,15 +212,21 @@ Sessions that are already running don't reread `CLAUDE.md`, so the injected mess
   asks you to answer in the terminal: Enter would confirm the dialog.
 - Long replies are spoken up to 600 characters, then "the rest is in the terminal".
 
-### Photos
+### Photos and files
 
-During a call you can show claude a picture: the **Send photo** button on the page (or `POST /api/image`
-from your own client). JPEG, PNG, GIF or WebP, up to 15 MB.
+During a call you can show claude a picture or hand it a file: the **Send photo or file** button on the
+page (or `POST /api/file` from your own client). Pictures (JPEG, PNG, GIF, WebP, up to 15 MB) and any
+other files (PDF, Markdown, PPTX…, up to 50 MB).
 - The bot says "Got the photo" and attaches it to your next phrase: "what's wrong with this error?". If
   you say nothing within 10 s (`IMAGE_WAIT_SECS`), the photo goes alone.
 - claude gets it as a real attachment (`[Image #1]` in the message), the same as an image pasted in the
   terminal: no file-read permission is asked. This works in tmux and herdr sessions alike.
-- The files are kept in `~/.cache/terminalvox/images` for 7 days, so claude can refer to them later.
+- Other files are saved under their own name, and claude gets the path in the message ("File from the
+  phone: …/report.pdf"). It opens what it can with its tools (PDF and text natively, PPTX or DOCX with
+  a script) and says aloud when it can't read a format. Reading a file outside the session's folder may
+  ask for permission in the terminal; the bot then tells you a dialog is open.
+- Photos are kept in `~/.cache/terminalvox/images`, files in `~/.cache/terminalvox/files`, for 7 days, so
+  claude can refer to them later.
 
 ### Switching sessions by voice
 
@@ -319,6 +325,9 @@ Any client can use it, e.g. a native phone app.
   (`pace`: `fast`, `normal` or `slow`).
 - `POST /api/switch` with JSON `{"pane": "%56", "inject": true}`: move the ongoing call to another
   session.
+- `POST /api/file`, multipart: `file` (any file up to 50 MB) and an optional `text`: like `/api/image`
+  below, but anything goes. A picture is handled as a photo; another file is saved under its name and
+  its path goes into the message for claude.
 - `POST /api/image`, multipart: `file` (JPEG, PNG, GIF or WebP, up to 15 MB) and an optional `text`: a
   photo into the ongoing call. With `text` it goes out right away; without it the bot says "Got the
   photo" and attaches it to your next phrase, and if you say nothing within `IMAGE_WAIT_SECS` it sends
